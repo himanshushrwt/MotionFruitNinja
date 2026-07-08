@@ -377,6 +377,7 @@
       <span id="conn-text">Connecting to desktop…</span>
     </div>
     <div id="peer-target">Target: loading…</div>
+    <div id="debug-log" style="font-size: 11px; font-family: monospace; color: #ff8888; background: rgba(0,0,0,0.25); padding: 8px; border-radius: 8px; max-height: 85px; overflow-y: auto; display: none; margin-top: 8px; border: 1px solid rgba(255,255,255,0.05); white-space: pre-wrap; word-break: break-all;"></div>
   </div>
 
   <!-- No peer ID warning -->
@@ -451,11 +452,21 @@ if (!targetPeerId) {
 }
 
 // ═══════════════════════════════════════════════════════════
-// PEER CONNECTION
+// PEER CONNECTION & DEBUG LOGGING
 // ═══════════════════════════════════════════════════════════
 let peer = null;
 let conn = null;
 let connected = false;
+
+function logDebug(msg, isError = false) {
+  const el = document.getElementById('debug-log');
+  if (el) {
+    el.style.display = 'block';
+    const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    el.innerHTML += `<div style="color: ${isError ? '#ff4757' : '#2cb67d'}">[${timestamp}] ${msg}</div>`;
+    el.scrollTop = el.scrollHeight;
+  }
+}
 
 function setConnStatus(state, text) {
   const dot = document.getElementById('conn-dot');
@@ -465,15 +476,36 @@ function setConnStatus(state, text) {
 
 function initPeer() {
   if (!targetPeerId) return;
-  peer = new Peer({ debug: 0 });
+  logDebug('Initializing PeerJS client...');
+  peer = new Peer({
+    debug: 1,
+    config: {
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
+        { urls: 'stun:stun3.l.google.com:19302' },
+        { urls: 'stun:stun4.l.google.com:19302' },
+        { urls: 'stun:stun.ekiga.net' },
+        { urls: 'stun:stun.ideasip.com' },
+        { urls: 'stun:stun.schlund.de' },
+        { urls: 'stun:stun.voiparound.com' },
+        { urls: 'stun:stun.voipbuster.com' },
+        { urls: 'stun:stun.voipstunt.com' }
+      ]
+    }
+  });
 
-  peer.on('open', () => {
+  peer.on('open', (id) => {
+    logDebug('Local Peer registered. ID: ' + id);
     setConnStatus('connecting', 'Connecting to desktop…');
+    logDebug('Opening WebRTC connection to target: ' + targetPeerId);
     conn = peer.connect(targetPeerId, { reliable: true, serialization: 'json' });
 
     conn.on('open', () => {
       connected = true;
       setConnStatus('connected', 'Connected to desktop ✓');
+      logDebug('WebRTC DataChannel connection established! ✓');
     });
 
     conn.on('data', (data) => {
@@ -483,24 +515,28 @@ function initPeer() {
       if (data.type === 'cal_ack') {
         clearTimeout(calRetryTimer);
         flashScreen('#2cb67d');
+        logDebug('Desktop acknowledged calibration.');
       }
     });
 
     conn.on('close', () => {
       connected = false;
       setConnStatus('error', 'Disconnected – retrying…');
+      logDebug('WebRTC connection closed.', true);
       setTimeout(initPeer, 2000);
     });
 
     conn.on('error', (e) => {
       console.error(e);
       setConnStatus('error', 'Connection error');
+      logDebug('Connection error: ' + (e.message || JSON.stringify(e)), true);
     });
   });
 
   peer.on('error', (e) => {
     console.error('peer error', e);
     setConnStatus('error', 'Peer error – retrying…');
+    logDebug('PeerJS Client error: ' + e.type + ' - ' + e.message, true);
     setTimeout(initPeer, 3000);
   });
 }

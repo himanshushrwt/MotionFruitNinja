@@ -1139,7 +1139,25 @@ function setStatus(state, text) {
 }
 
 function initPeer() {
-  peer = new Peer({ debug: 0 });
+  // Use a rich array of public STUN servers to bypass symmetric NATs / Router blocks
+  peer = new Peer({
+    debug: 1,
+    config: {
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
+        { urls: 'stun:stun3.l.google.com:19302' },
+        { urls: 'stun:stun4.l.google.com:19302' },
+        { urls: 'stun:stun.ekiga.net' },
+        { urls: 'stun:stun.ideasip.com' },
+        { urls: 'stun:stun.schlund.de' },
+        { urls: 'stun:stun.voiparound.com' },
+        { urls: 'stun:stun.voipbuster.com' },
+        { urls: 'stun:stun.voipstunt.com' }
+      ]
+    }
+  });
 
   peer.on('open', (id) => {
     document.getElementById('peer-id-display').textContent = `Peer ID: ${id}`;
@@ -1164,14 +1182,23 @@ function initPeer() {
 
   peer.on('connection', (c) => {
     conn = c;
-    setStatus('connected', 'Phone connected ✓');
+    setStatus('waiting', 'Phone connecting (handshake)…');
+
+    conn.on('open', () => {
+      setStatus('connected', 'Phone connected ✓');
+      // Send cal_ack to confirm open
+      try { conn.send({ type: 'cal_ack' }); } catch(e) {}
+    });
 
     conn.on('data', handlePhoneData);
     conn.on('close', () => {
       conn = null;
       setStatus('waiting', 'Phone disconnected…');
     });
-    conn.on('error', (e) => console.error('conn error', e));
+    conn.on('error', (e) => {
+      console.error('conn error', e);
+      setStatus('waiting', 'Connection error – waiting…');
+    });
   });
 
   peer.on('error', (e) => {
