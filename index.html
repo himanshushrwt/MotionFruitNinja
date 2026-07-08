@@ -1,0 +1,1286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Motion Fruit Ninja – Desktop</title>
+  <meta name="description" content="A motion-controlled Fruit Ninja game. Pair your phone as a sword controller via QR code." />
+
+  <!-- PeerJS CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
+  <!-- QRCode.js CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;900&display=swap" rel="stylesheet" />
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0a0a12;
+      --panel: rgba(255,255,255,0.04);
+      --border: rgba(255,255,255,0.08);
+      --accent: #7f5af0;
+      --accent2: #2cb67d;
+      --text: #fffffe;
+      --sub: rgba(255,255,255,0.55);
+    }
+
+    html, body {
+      width: 100%; height: 100%;
+      background: var(--bg);
+      font-family: 'Outfit', sans-serif;
+      color: var(--text);
+      overflow: hidden;
+    }
+
+    /* ── Layout ───────────────────────────────── */
+    #app {
+      display: grid;
+      grid-template-columns: 1fr 320px;
+      grid-template-rows: 100vh;
+      width: 100vw; height: 100vh;
+    }
+
+    /* ── Canvas side ─────────────────────────── */
+    #game-wrap {
+      position: relative;
+      overflow: hidden;
+    }
+
+    #gameCanvas {
+      display: block;
+      width: 100%; height: 100%;
+      cursor: none;
+    }
+
+    /* HUD overlay */
+    #hud {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      padding: 24px 28px;
+    }
+
+    #score-display {
+      font-size: clamp(28px, 4vw, 52px);
+      font-weight: 900;
+      letter-spacing: -1px;
+      text-shadow: 0 0 30px rgba(127,90,240,0.8);
+      line-height: 1;
+    }
+
+    #score-label {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: var(--sub);
+      margin-bottom: 4px;
+    }
+
+    #combo-display {
+      margin-top: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      color: #ffd700;
+      text-shadow: 0 0 12px rgba(255,215,0,0.6);
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+
+    #lives-row {
+      position: absolute;
+      top: 24px; right: 28px;
+      display: flex; gap: 10px;
+    }
+
+    .life-icon {
+      width: 22px; height: 22px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 40% 35%, #ff6b6b, #c0392b);
+      box-shadow: 0 0 12px rgba(255,80,80,0.5);
+      transition: opacity 0.3s, transform 0.3s;
+    }
+    .life-icon.lost {
+      opacity: 0.18;
+      transform: scale(0.7);
+    }
+
+    #connection-status {
+      position: absolute;
+      bottom: 24px; left: 28px;
+      display: flex; align-items: center; gap: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 1px;
+      color: var(--sub);
+    }
+
+    #status-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #888;
+      box-shadow: 0 0 6px #888;
+      transition: background 0.4s, box-shadow 0.4s;
+    }
+    #status-dot.connected { background: var(--accent2); box-shadow: 0 0 10px var(--accent2); }
+    #status-dot.waiting   { background: #ffd700;        box-shadow: 0 0 10px #ffd700;        animation: pulse-dot 1.2s ease-in-out infinite; }
+
+    @keyframes pulse-dot {
+      0%,100% { opacity:1; } 50% { opacity:0.3; }
+    }
+
+    /* Game over overlay */
+    #game-over {
+      display: none;
+      position: absolute; inset: 0;
+      background: rgba(10,10,18,0.88);
+      backdrop-filter: blur(12px);
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 18px;
+      text-align: center;
+    }
+    #game-over.show { display: flex; }
+
+    #game-over h1 {
+      font-size: clamp(48px, 8vw, 96px);
+      font-weight: 900;
+      background: linear-gradient(135deg, #7f5af0, #2cb67d, #ffd700);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      letter-spacing: -2px;
+      line-height: 1;
+    }
+
+    #final-score {
+      font-size: 22px;
+      color: var(--sub);
+    }
+
+    #restart-btn {
+      margin-top: 8px;
+      padding: 14px 40px;
+      border: none; outline: none; cursor: pointer;
+      border-radius: 50px;
+      background: linear-gradient(135deg, var(--accent), #6344c8);
+      color: #fff;
+      font-family: 'Outfit', sans-serif;
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      box-shadow: 0 8px 32px rgba(127,90,240,0.45);
+      transition: transform 0.15s, box-shadow 0.15s;
+    }
+    #restart-btn:hover { transform: translateY(-2px); box-shadow: 0 12px 40px rgba(127,90,240,0.6); }
+    #restart-btn:active { transform: translateY(0px); }
+
+    /* ── Right panel ─────────────────────────── */
+    #panel {
+      background: var(--panel);
+      border-left: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 32px 24px;
+      gap: 24px;
+      overflow-y: auto;
+    }
+
+    #panel-logo {
+      font-size: 18px;
+      font-weight: 900;
+      letter-spacing: -0.5px;
+      background: linear-gradient(135deg, #7f5af0, #2cb67d);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    #panel-logo span { color: #ffd700; -webkit-text-fill-color: #ffd700; }
+
+    .panel-section {
+      width: 100%;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 20px;
+    }
+
+    .section-title {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: var(--sub);
+      margin-bottom: 14px;
+    }
+
+    /* QR code */
+    #qr-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+    }
+
+    #qrcode {
+      background: #fff;
+      border-radius: 12px;
+      padding: 10px;
+      width: 180px; height: 180px;
+      display: flex; align-items: center; justify-content: center;
+    }
+
+    #qrcode canvas, #qrcode img {
+      width: 160px !important;
+      height: 160px !important;
+    }
+
+    #peer-id-display {
+      font-size: 11px;
+      font-family: 'Courier New', monospace;
+      color: var(--sub);
+      word-break: break-all;
+      text-align: center;
+      background: rgba(0,0,0,0.3);
+      padding: 8px 12px;
+      border-radius: 8px;
+      width: 100%;
+    }
+
+    .qr-hint {
+      font-size: 12px;
+      color: var(--sub);
+      text-align: center;
+      line-height: 1.5;
+    }
+
+    /* Sensor bars */
+    .sensor-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .sensor-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--sub);
+      width: 30px;
+      flex-shrink: 0;
+    }
+
+    .sensor-bar-bg {
+      flex: 1;
+      height: 6px;
+      background: rgba(255,255,255,0.06);
+      border-radius: 3px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .sensor-bar-fill {
+      height: 100%;
+      width: 50%;
+      border-radius: 3px;
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+      transition: width 0.05s linear;
+    }
+
+    .sensor-val {
+      font-size: 10px;
+      font-family: 'Courier New', monospace;
+      color: var(--sub);
+      width: 38px;
+      text-align: right;
+      flex-shrink: 0;
+    }
+
+    /* Stats */
+    .stat-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .stat-item {
+      background: rgba(0,0,0,0.25);
+      border-radius: 10px;
+      padding: 12px;
+    }
+
+    .stat-item .val {
+      font-size: 20px;
+      font-weight: 900;
+      line-height: 1;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .stat-item .lbl {
+      font-size: 10px;
+      color: var(--sub);
+      margin-top: 3px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+
+    /* Instructions */
+    .instr-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .instr-list li {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      font-size: 12px;
+      color: var(--sub);
+      line-height: 1.4;
+    }
+
+    .instr-list li .num {
+      width: 20px; height: 20px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      font-size: 10px;
+      font-weight: 900;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+      color: #fff;
+    }
+
+    /* Scrollbar */
+    #panel::-webkit-scrollbar { width: 4px; }
+    #panel::-webkit-scrollbar-track { background: transparent; }
+    #panel::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+  </style>
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ── Game Canvas ──────────────────────────── -->
+  <div id="game-wrap">
+    <canvas id="gameCanvas"></canvas>
+
+    <div id="hud">
+      <div id="score-label">SCORE</div>
+      <div id="score-display">0</div>
+      <div id="combo-display" id="combo-display">🔥 COMBO x<span id="combo-num">0</span></div>
+    </div>
+
+    <div id="lives-row">
+      <div class="life-icon" id="life0"></div>
+      <div class="life-icon" id="life1"></div>
+      <div class="life-icon" id="life2"></div>
+    </div>
+
+    <div id="connection-status">
+      <div id="status-dot"></div>
+      <span id="status-text">Initialising…</span>
+    </div>
+
+    <div id="game-over">
+      <h1>GAME OVER</h1>
+      <div id="final-score">You scored <strong id="final-num">0</strong> points</div>
+      <button id="restart-btn" onclick="restartGame()">Play Again</button>
+    </div>
+  </div>
+
+  <!-- ── Right Panel ──────────────────────────── -->
+  <div id="panel">
+    <div id="panel-logo">Motion<span>🍉</span>Ninja</div>
+
+    <!-- QR / Pairing -->
+    <div class="panel-section">
+      <div class="section-title">📱 Pair Your Phone</div>
+      <div id="qr-wrap">
+        <div id="qrcode"></div>
+        <div id="peer-id-display">Generating peer ID…</div>
+        <div class="qr-hint">Scan with your phone to use it as a motion sword controller</div>
+      </div>
+    </div>
+
+    <!-- Live Sensor -->
+    <div class="panel-section">
+      <div class="section-title">📡 Live Sensor Feed</div>
+      <div class="sensor-row">
+        <div class="sensor-label">α</div>
+        <div class="sensor-bar-bg"><div class="sensor-bar-fill" id="bar-alpha"></div></div>
+        <div class="sensor-val" id="val-alpha">0°</div>
+      </div>
+      <div class="sensor-row">
+        <div class="sensor-label">β</div>
+        <div class="sensor-bar-bg"><div class="sensor-bar-fill" id="bar-beta"></div></div>
+        <div class="sensor-val" id="val-beta">0°</div>
+      </div>
+      <div class="sensor-row">
+        <div class="sensor-label">γ</div>
+        <div class="sensor-bar-bg"><div class="sensor-bar-fill" id="bar-gamma"></div></div>
+        <div class="sensor-val" id="val-gamma">0°</div>
+      </div>
+      <div class="sensor-row">
+        <div class="sensor-label">ax</div>
+        <div class="sensor-bar-bg"><div class="sensor-bar-fill" id="bar-ax"></div></div>
+        <div class="sensor-val" id="val-ax">0</div>
+      </div>
+      <div class="sensor-row">
+        <div class="sensor-label">ay</div>
+        <div class="sensor-bar-bg"><div class="sensor-bar-fill" id="bar-ay"></div></div>
+        <div class="sensor-val" id="val-ay">0</div>
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="panel-section">
+      <div class="section-title">📊 Session Stats</div>
+      <div class="stat-grid">
+        <div class="stat-item"><div class="val" id="stat-sliced">0</div><div class="lbl">Sliced</div></div>
+        <div class="stat-item"><div class="val" id="stat-missed">0</div><div class="lbl">Missed</div></div>
+        <div class="stat-item"><div class="val" id="stat-best">0</div><div class="lbl">Best Combo</div></div>
+        <div class="stat-item"><div class="val" id="stat-bombs">0</div><div class="lbl">Bombs Hit</div></div>
+      </div>
+    </div>
+
+    <!-- Instructions -->
+    <div class="panel-section">
+      <div class="section-title">ℹ️ How to Play</div>
+      <ul class="instr-list">
+        <li><span class="num">1</span><span>Scan the QR code with your phone</span></li>
+        <li><span class="num">2</span><span>Tap "Enable Sword" and grant sensor permissions</span></li>
+        <li><span class="num">3</span><span>Swing your phone to slash fruits on screen</span></li>
+        <li><span class="num">4</span><span>Avoid bombs — they cost a life!</span></li>
+        <li><span class="num">5</span><span>Fruits that fall off cost a life too</span></li>
+      </ul>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════
+// AUDIO ENGINE
+// ═══════════════════════════════════════════════════════════
+const AudioCtx = window.AudioContext || window.webkitAudioContext;
+let audioCtx = null;
+
+function ensureAudio() {
+  if (!audioCtx) audioCtx = new AudioCtx();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+}
+
+function playSlice(pitch = 1) {
+  ensureAudio();
+  const t = audioCtx.currentTime;
+
+  // Swoosh layer
+  const buf = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.18, audioCtx.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < data.length; i++) {
+    data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / data.length, 1.2);
+  }
+  const src = audioCtx.createBufferSource();
+  src.buffer = buf;
+  const bpf = audioCtx.createBiquadFilter();
+  bpf.type = 'bandpass';
+  bpf.frequency.setValueAtTime(2200 * pitch, t);
+  bpf.frequency.exponentialRampToValueAtTime(800, t + 0.15);
+  bpf.Q.value = 1.8;
+  const gain = audioCtx.createGain();
+  gain.gain.setValueAtTime(0.55, t);
+  gain.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+  src.connect(bpf); bpf.connect(gain); gain.connect(audioCtx.destination);
+  src.start(t);
+
+  // Juicy thud
+  const osc = audioCtx.createOscillator();
+  osc.type = 'triangle';
+  osc.frequency.setValueAtTime(320 * pitch, t);
+  osc.frequency.exponentialRampToValueAtTime(80, t + 0.12);
+  const g2 = audioCtx.createGain();
+  g2.gain.setValueAtTime(0.4, t);
+  g2.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
+  osc.connect(g2); g2.connect(audioCtx.destination);
+  osc.start(t); osc.stop(t + 0.14);
+}
+
+function playBomb() {
+  ensureAudio();
+  const t = audioCtx.currentTime;
+  [80, 120, 180].forEach((freq, i) => {
+    const osc = audioCtx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(freq, t + i * 0.04);
+    const g = audioCtx.createGain();
+    g.gain.setValueAtTime(0.35, t + i * 0.04);
+    g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.04 + 0.3);
+    osc.connect(g); g.connect(audioCtx.destination);
+    osc.start(t + i * 0.04); osc.stop(t + i * 0.04 + 0.32);
+  });
+}
+
+function playMiss() {
+  ensureAudio();
+  const t = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(260, t);
+  osc.frequency.exponentialRampToValueAtTime(140, t + 0.22);
+  const g = audioCtx.createGain();
+  g.gain.setValueAtTime(0.28, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+  osc.connect(g); g.connect(audioCtx.destination);
+  osc.start(t); osc.stop(t + 0.23);
+}
+
+function playCombo(n) {
+  ensureAudio();
+  const t = audioCtx.currentTime;
+  for (let i = 0; i < Math.min(n, 5); i++) {
+    const osc = audioCtx.createOscillator();
+    osc.type = 'sine';
+    const freqs = [261, 329, 392, 523, 659];
+    osc.frequency.value = freqs[i] || 659;
+    const g = audioCtx.createGain();
+    g.gain.setValueAtTime(0, t + i * 0.07);
+    g.gain.linearRampToValueAtTime(0.22, t + i * 0.07 + 0.03);
+    g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.07 + 0.2);
+    osc.connect(g); g.connect(audioCtx.destination);
+    osc.start(t + i * 0.07); osc.stop(t + i * 0.07 + 0.22);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// GAME STATE
+// ═══════════════════════════════════════════════════════════
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+let gameState = {
+  score: 0,
+  lives: 3,
+  combo: 0,
+  bestCombo: 0,
+  sliced: 0,
+  missed: 0,
+  bombsHit: 0,
+  running: true,
+  lastTime: 0,
+  spawnTimer: 0,
+  spawnInterval: 1800, // ms
+  level: 1,
+};
+
+// Fruits & bombs
+let fruits = [];
+let particles = [];
+let slashTrail = []; // [{x,y,t}]
+let swordGlow = { x: -999, y: -999, active: false, mag: 0 };
+
+// Colours for fruits
+const FRUIT_DEFS = [
+  { label: 'watermelon', outerColor: '#2ecc40', innerColor: '#e74c3c', seeds: true, size: 42 },
+  { label: 'orange',     outerColor: '#e67e22', innerColor: '#f39c12', seeds: false, size: 34 },
+  { label: 'lemon',      outerColor: '#f1c40f', innerColor: '#f9e428', seeds: false, size: 30 },
+  { label: 'kiwi',       outerColor: '#27ae60', innerColor: '#a8d5a2', seeds: true,  size: 32 },
+  { label: 'mango',      outerColor: '#ff7f50', innerColor: '#ffd700', seeds: false, size: 36 },
+  { label: 'blueberry',  outerColor: '#4b0082', innerColor: '#9b59b6', seeds: false, size: 22 },
+  { label: 'strawberry', outerColor: '#e74c3c', innerColor: '#ffb3c1', seeds: true,  size: 28 },
+];
+
+// ═══════════════════════════════════════════════════════════
+// RESIZE
+// ═══════════════════════════════════════════════════════════
+function resizeCanvas() {
+  const wrap = document.getElementById('game-wrap');
+  canvas.width = wrap.clientWidth;
+  canvas.height = wrap.clientHeight;
+}
+resizeCanvas();
+window.addEventListener('resize', resizeCanvas);
+
+// ═══════════════════════════════════════════════════════════
+// FRUIT SPAWNING
+// ═══════════════════════════════════════════════════════════
+function spawnFruit() {
+  const isBomb = Math.random() < 0.12;
+  const def = FRUIT_DEFS[Math.floor(Math.random() * FRUIT_DEFS.length)];
+  const x = 80 + Math.random() * (canvas.width - 160);
+  const vy = -(canvas.height * 0.012 + Math.random() * canvas.height * 0.008);
+  const vx = (Math.random() - 0.5) * 4.5;
+
+  fruits.push({
+    x, y: canvas.height + 60,
+    vx, vy,
+    ax: 0, ay: 0.18,
+    rotation: Math.random() * Math.PI * 2,
+    rotSpeed: (Math.random() - 0.5) * 0.08,
+    def: isBomb ? null : def,
+    isBomb,
+    size: isBomb ? 34 : def.size,
+    sliced: false,
+    sliceProgress: 0,
+    sliceAngle: 0,
+    alpha: 1,
+    id: Math.random(),
+    // Half pieces after slice
+    half1: null,
+    half2: null,
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
+// DRAWING HELPERS
+// ═══════════════════════════════════════════════════════════
+function drawFruit(f, px, py, r, angle, alpha) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.translate(px, py);
+  ctx.rotate(angle);
+
+  if (f.isBomb) {
+    // Bomb
+    const gr = ctx.createRadialGradient(0, 0, 2, 0, 0, r);
+    gr.addColorStop(0, '#555');
+    gr.addColorStop(1, '#111');
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.fillStyle = gr;
+    ctx.fill();
+    // Fuse
+    ctx.strokeStyle = '#ffd700';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(0, -r);
+    ctx.quadraticCurveTo(r * 0.4, -r * 1.4, r * 0.2, -r * 1.8);
+    ctx.stroke();
+    // Spark
+    ctx.fillStyle = '#ff6b00';
+    ctx.beginPath();
+    ctx.arc(r * 0.2, -r * 1.8, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.font = `bold ${r * 0.7}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('💣', 0, 0);
+  } else {
+    const def = f.def;
+    // Outer
+    const gr = ctx.createRadialGradient(-r * 0.3, -r * 0.3, r * 0.1, 0, 0, r);
+    gr.addColorStop(0, lightenColor(def.outerColor, 40));
+    gr.addColorStop(1, def.outerColor);
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.fillStyle = gr;
+    ctx.fill();
+    // Shine
+    ctx.beginPath();
+    ctx.arc(-r * 0.28, -r * 0.28, r * 0.28, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.18)';
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+function drawFruitSliced(f) {
+  if (!f.def && !f.isBomb) return;
+  const hw = f.size * 1.1;
+  const angle = f.sliceAngle;
+
+  // Two halves drifting apart
+  [-1, 1].forEach((side) => {
+    ctx.save();
+    ctx.globalAlpha = f.alpha;
+    const drift = side * f.sliceProgress * 60;
+    const rise  = -f.sliceProgress * 30;
+    ctx.translate(f.x + drift, f.y + rise);
+    ctx.rotate(f.rotation + side * f.sliceProgress * 0.8);
+
+    ctx.beginPath();
+    ctx.arc(0, 0, hw, angle + Math.PI * 0.05, angle + Math.PI * 1.05 * (side === 1 ? 1 : -1) + Math.PI);
+    ctx.closePath();
+
+    if (!f.isBomb) {
+      const def = f.def;
+      // Inner half
+      const gr = ctx.createRadialGradient(0, 0, 2, 0, 0, hw);
+      gr.addColorStop(0, def.innerColor);
+      gr.addColorStop(1, def.outerColor);
+      ctx.fillStyle = gr;
+      ctx.fill();
+      // Seeds
+      if (def.seeds) {
+        ctx.fillStyle = '#333';
+        for (let s = 0; s < 4; s++) {
+          const sx = (Math.random() - 0.5) * hw * 0.9;
+          const sy = (Math.random() - 0.5) * hw * 0.9;
+          ctx.beginPath();
+          ctx.ellipse(sx, sy, 2, 3.5, Math.random() * Math.PI, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    } else {
+      ctx.fillStyle = '#222';
+      ctx.fill();
+    }
+    ctx.restore();
+  });
+}
+
+function lightenColor(hex, amount) {
+  const num = parseInt(hex.replace('#', ''), 16);
+  const r = Math.min(255, (num >> 16) + amount);
+  const g = Math.min(255, ((num >> 8) & 0xff) + amount);
+  const b = Math.min(255, (num & 0xff) + amount);
+  return `rgb(${r},${g},${b})`;
+}
+
+// ═══════════════════════════════════════════════════════════
+// SWORD TRAIL RENDERING
+// ═══════════════════════════════════════════════════════════
+function drawSwordTrail() {
+  if (slashTrail.length < 3) return;
+  const now = performance.now();
+  // Prune old trail points (keep last 350ms)
+  while (slashTrail.length > 0 && now - slashTrail[0].t > 350) slashTrail.shift();
+  if (slashTrail.length < 2) return;
+
+  ctx.save();
+  for (let i = 1; i < slashTrail.length; i++) {
+    const p0 = slashTrail[i - 1];
+    const p1 = slashTrail[i];
+    const age = (now - p0.t) / 350;
+    const alpha = Math.pow(1 - age, 1.5) * 0.9;
+    const width = (1 - age) * 14 * (swordGlow.mag / 30 + 1);
+
+    const grad = ctx.createLinearGradient(p0.x, p0.y, p1.x, p1.y);
+    grad.addColorStop(0, `hsla(${260 + age * 80},100%,70%,${alpha})`);
+    grad.addColorStop(1, `hsla(${160 + age * 60},100%,60%,${alpha * 0.6})`);
+
+    ctx.beginPath();
+    ctx.lineWidth = Math.max(1, width);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = grad;
+    ctx.moveTo(p0.x, p0.y);
+    ctx.lineTo(p1.x, p1.y);
+    ctx.stroke();
+  }
+
+  // Glow tip
+  if (slashTrail.length > 0) {
+    const tip = slashTrail[slashTrail.length - 1];
+    const r = 10 + swordGlow.mag * 0.4;
+    const glow = ctx.createRadialGradient(tip.x, tip.y, 0, tip.x, tip.y, r);
+    glow.addColorStop(0, 'rgba(180,130,255,0.9)');
+    glow.addColorStop(1, 'rgba(100,200,255,0)');
+    ctx.beginPath();
+    ctx.arc(tip.x, tip.y, r, 0, Math.PI * 2);
+    ctx.fillStyle = glow;
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+// ═══════════════════════════════════════════════════════════
+// PARTICLES
+// ═══════════════════════════════════════════════════════════
+function spawnParticles(x, y, color, count = 18) {
+  for (let i = 0; i < count; i++) {
+    const angle = (Math.PI * 2 * i) / count + Math.random() * 0.5;
+    const speed = 2 + Math.random() * 6;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      alpha: 1,
+      size: 3 + Math.random() * 5,
+      color,
+      decay: 0.025 + Math.random() * 0.02,
+    });
+  }
+}
+
+function spawnJuiceText(x, y, text) {
+  particles.push({
+    x, y,
+    vx: (Math.random() - 0.5) * 2,
+    vy: -3 - Math.random() * 2,
+    alpha: 1,
+    size: 0,
+    color: '#fff',
+    decay: 0.018,
+    text,
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
+// COLLISION: sword trail vs fruit
+// ═══════════════════════════════════════════════════════════
+function checkSliceCollisions() {
+  if (slashTrail.length < 2) return;
+  const now = performance.now();
+  // BUG FIX: use a wider 200ms window so we check many segments, not just last 2 points
+  const recent = slashTrail.filter(p => now - p.t < 200);
+  if (recent.length < 2) return;
+
+  // Check every consecutive segment in the recent trail
+  for (let i = 1; i < recent.length; i++) {
+    const p0 = recent[i - 1];
+    const p1 = recent[i];
+    const dx = p1.x - p0.x;
+    const dy = p1.y - p0.y;
+    const mag = Math.sqrt(dx * dx + dy * dy);
+    if (mag < 1) continue; // BUG FIX: lowered from 4 → 1px minimum movement
+
+    fruits.forEach((f) => {
+      if (f.sliced) return;
+      // BUG FIX: larger hitbox multiplier (1.4 instead of 1.15) for forgiving hits
+      const dist = pointSegmentDist(f.x, f.y, p0.x, p0.y, p1.x, p1.y);
+      if (dist < f.size * 1.4) {
+        sliceFruit(f, Math.atan2(dy, dx));
+      }
+    });
+  }
+}
+
+function pointSegmentDist(px, py, ax, ay, bx, by) {
+  const abx = bx - ax, aby = by - ay;
+  const len2 = abx * abx + aby * aby;
+  if (len2 === 0) return Math.hypot(px - ax, py - ay);
+  let t = ((px - ax) * abx + (py - ay) * aby) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - (ax + t * abx), py - (ay + t * aby));
+}
+
+function sliceFruit(f, angle) {
+  f.sliced = true;
+  f.sliceAngle = angle;
+  f.sliceProgress = 0;
+
+  if (f.isBomb) {
+    // Bomb explode
+    gameState.lives = Math.max(0, gameState.lives - 1);
+    gameState.bombsHit++;
+    gameState.combo = 0;
+    playBomb();
+    spawnParticles(f.x, f.y, '#ff4400', 30);
+    spawnJuiceText(f.x, f.y - 30, '💥 BOOM!');
+    screenShake(12, 400);
+    updateLives();
+  } else {
+    gameState.score += 10 + gameState.combo * 2;
+    gameState.sliced++;
+    gameState.combo++;
+    if (gameState.combo > gameState.bestCombo) gameState.bestCombo = gameState.combo;
+
+    playSlice(0.8 + Math.random() * 0.5);
+    spawnParticles(f.x, f.y, f.def.innerColor, 22);
+    spawnJuiceText(f.x, f.y - 30, gameState.combo >= 3 ? `+${10 + gameState.combo * 2} 🔥` : `+${10 + gameState.combo * 2}`);
+
+    if (gameState.combo >= 3) {
+      playCombo(gameState.combo);
+      showCombo(gameState.combo);
+    }
+
+    updateHUD();
+    updateStats();
+  }
+
+  if (gameState.lives <= 0) triggerGameOver();
+}
+
+// ═══════════════════════════════════════════════════════════
+// SCREEN SHAKE
+// ═══════════════════════════════════════════════════════════
+let shakeAmount = 0, shakeDecay = 0, shakeTimer = 0;
+function screenShake(amount, duration) {
+  shakeAmount = amount; shakeDecay = amount / (duration / 16);
+}
+
+// ═══════════════════════════════════════════════════════════
+// HUD UPDATES
+// ═══════════════════════════════════════════════════════════
+function updateHUD() {
+  document.getElementById('score-display').textContent = gameState.score.toLocaleString();
+}
+
+function updateLives() {
+  for (let i = 0; i < 3; i++) {
+    const el = document.getElementById(`life${i}`);
+    el.classList.toggle('lost', i >= gameState.lives);
+  }
+}
+
+function updateStats() {
+  document.getElementById('stat-sliced').textContent = gameState.sliced;
+  document.getElementById('stat-missed').textContent = gameState.missed;
+  document.getElementById('stat-best').textContent = gameState.bestCombo;
+  document.getElementById('stat-bombs').textContent = gameState.bombsHit;
+}
+
+let comboTimeout;
+function showCombo(n) {
+  const el = document.getElementById('combo-display');
+  document.getElementById('combo-num').textContent = n;
+  el.style.opacity = '1';
+  clearTimeout(comboTimeout);
+  comboTimeout = setTimeout(() => { el.style.opacity = '0'; }, 1200);
+}
+
+// ═══════════════════════════════════════════════════════════
+// BACKGROUND
+// ═══════════════════════════════════════════════════════════
+let bgStars = [];
+function initBgStars() {
+  bgStars = [];
+  for (let i = 0; i < 80; i++) {
+    bgStars.push({
+      x: Math.random() * canvas.width,
+      y: Math.random() * canvas.height,
+      r: 0.5 + Math.random() * 1.5,
+      alpha: 0.2 + Math.random() * 0.5,
+      twinkle: Math.random() * Math.PI * 2,
+    });
+  }
+}
+initBgStars();
+
+function drawBackground(t) {
+  // Deep space gradient
+  const bg = ctx.createLinearGradient(0, 0, 0, canvas.height);
+  bg.addColorStop(0, '#07071a');
+  bg.addColorStop(1, '#0d0520');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Stars
+  bgStars.forEach(s => {
+    s.twinkle += 0.02;
+    const a = s.alpha * (0.7 + 0.3 * Math.sin(s.twinkle));
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(255,255,255,${a})`;
+    ctx.fill();
+  });
+
+  // Subtle bottom glow (floor)
+  const floor = ctx.createLinearGradient(0, canvas.height - 80, 0, canvas.height);
+  floor.addColorStop(0, 'rgba(127,90,240,0)');
+  floor.addColorStop(1, 'rgba(127,90,240,0.08)');
+  ctx.fillStyle = floor;
+  ctx.fillRect(0, canvas.height - 80, canvas.width, 80);
+}
+
+// ═══════════════════════════════════════════════════════════
+// MAIN GAME LOOP
+// ═══════════════════════════════════════════════════════════
+let shakeSeed = 0;
+function gameLoop(timestamp) {
+  if (!gameState.running) return;
+
+  const dt = Math.min(timestamp - gameState.lastTime, 50);
+  gameState.lastTime = timestamp;
+
+  // Screen shake
+  let sx = 0, sy = 0;
+  if (shakeAmount > 0) {
+    shakeSeed++;
+    sx = (Math.sin(shakeSeed * 7.3) * shakeAmount);
+    sy = (Math.cos(shakeSeed * 5.1) * shakeAmount);
+    shakeAmount = Math.max(0, shakeAmount - shakeDecay);
+  }
+
+  ctx.save();
+  ctx.translate(sx, sy);
+
+  // Clear + background
+  ctx.clearRect(-10, -10, canvas.width + 20, canvas.height + 20);
+  drawBackground(timestamp);
+
+  // Spawn timer
+  gameState.spawnTimer += dt;
+  if (gameState.spawnTimer >= gameState.spawnInterval) {
+    gameState.spawnTimer = 0;
+    const count = Math.random() < 0.25 ? 2 : 1;
+    for (let i = 0; i < count; i++) spawnFruit();
+    // Gradually increase difficulty
+    gameState.spawnInterval = Math.max(700, gameState.spawnInterval - 2);
+  }
+
+  // Update & draw fruits
+  fruits = fruits.filter(f => {
+    if (f.sliced) {
+      f.sliceProgress += 0.028;
+      f.alpha -= 0.025;
+      if (f.alpha <= 0) return false;
+      drawFruitSliced(f);
+      return true;
+    }
+
+    // Physics
+    f.x += f.vx;
+    f.y += f.vy;
+    f.vy += f.ay;
+    f.rotation += f.rotSpeed;
+
+    // Off screen bottom
+    if (f.y > canvas.height + 80) {
+      if (!f.isBomb) {
+        gameState.missed++;
+        gameState.combo = 0;
+        gameState.lives = Math.max(0, gameState.lives - 1);
+        playMiss();
+        updateLives();
+        updateStats();
+        if (gameState.lives <= 0) triggerGameOver();
+      }
+      return false;
+    }
+
+    drawFruit(f, f.x, f.y, f.size, f.rotation, f.alpha);
+    return true;
+  });
+
+  // Particles
+  particles = particles.filter(p => {
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy += 0.12;
+    p.alpha -= p.decay;
+    if (p.alpha <= 0) return false;
+
+    ctx.save();
+    ctx.globalAlpha = p.alpha;
+    if (p.text) {
+      ctx.font = `bold ${18 + p.size}px 'Outfit', sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = p.color;
+      ctx.shadowColor = p.color;
+      ctx.shadowBlur = 8;
+      ctx.fillText(p.text, p.x, p.y);
+    } else {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+      ctx.fillStyle = p.color;
+      ctx.shadowColor = p.color;
+      ctx.shadowBlur = 6;
+      ctx.fill();
+    }
+    ctx.restore();
+    return true;
+  });
+
+  // Sword trail
+  drawSwordTrail();
+
+  // Check collisions
+  checkSliceCollisions();
+
+  ctx.restore();
+
+  requestAnimationFrame(gameLoop);
+}
+
+// ═══════════════════════════════════════════════════════════
+// GAME OVER / RESTART
+// ═══════════════════════════════════════════════════════════
+function triggerGameOver() {
+  gameState.running = false;
+  document.getElementById('final-num').textContent = gameState.score.toLocaleString();
+  document.getElementById('game-over').classList.add('show');
+}
+
+function restartGame() {
+  gameState = {
+    score: 0, lives: 3, combo: 0, bestCombo: gameState.bestCombo,
+    sliced: 0, missed: 0, bombsHit: 0, running: true,
+    lastTime: performance.now(), spawnTimer: 0,
+    spawnInterval: 1800, level: 1,
+  };
+  fruits = []; particles = []; slashTrail = [];
+  shakeAmount = 0;
+  document.getElementById('game-over').classList.remove('show');
+  updateHUD(); updateLives(); updateStats();
+  requestAnimationFrame(gameLoop);
+}
+
+// ═══════════════════════════════════════════════════════════
+// PEERJS SETUP
+// ═══════════════════════════════════════════════════════════
+let peer = null;
+let conn = null;
+
+// Sensor calibration
+let calibration = { alpha: null, beta: null, gamma: null };
+
+function setStatus(state, text) {
+  const dot = document.getElementById('status-dot');
+  dot.className = '';
+  if (state) dot.classList.add(state);
+  document.getElementById('status-text').textContent = text;
+}
+
+function initPeer() {
+  peer = new Peer({ debug: 0 });
+
+  peer.on('open', (id) => {
+    document.getElementById('peer-id-display').textContent = `Peer ID: ${id}`;
+    setStatus('waiting', 'Waiting for phone…');
+
+    // Build mobile URL — same host, replace index.html with mobile.html
+    const loc = window.location;
+    const base = loc.origin + loc.pathname.replace('index.html', '');
+    const mobileURL = `${base}mobile.html?peer=${encodeURIComponent(id)}`;
+
+    // QR code
+    const qrDiv = document.getElementById('qrcode');
+    qrDiv.innerHTML = '';
+    new QRCode(qrDiv, {
+      text: mobileURL,
+      width: 160, height: 160,
+      colorDark: '#1a0a3a',
+      colorLight: '#ffffff',
+      correctLevel: QRCode.CorrectLevel.M,
+    });
+  });
+
+  peer.on('connection', (c) => {
+    conn = c;
+    setStatus('connected', 'Phone connected ✓');
+
+    conn.on('data', handlePhoneData);
+    conn.on('close', () => {
+      conn = null;
+      setStatus('waiting', 'Phone disconnected…');
+    });
+    conn.on('error', (e) => console.error('conn error', e));
+  });
+
+  peer.on('error', (e) => {
+    console.error('PeerJS error', e);
+    setStatus('', 'Connection error – retrying…');
+    setTimeout(initPeer, 3000);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
+// MOUSE / TOUCH FALLBACK (desktop testing without phone)
+// ═══════════════════════════════════════════════════════════
+canvas.addEventListener('mousemove', (e) => {
+  if (conn) return; // phone is connected, ignore mouse
+  const rect = canvas.getBoundingClientRect();
+  const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+  const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+  slashTrail.push({ x, y, t: performance.now() });
+  if (slashTrail.length > 120) slashTrail.shift();
+  swordGlow.x = x; swordGlow.y = y; swordGlow.active = true; swordGlow.mag = 15;
+});
+
+canvas.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  if (conn) return;
+  const rect = canvas.getBoundingClientRect();
+  const t = e.touches[0];
+  const x = (t.clientX - rect.left) * (canvas.width / rect.width);
+  const y = (t.clientY - rect.top) * (canvas.height / rect.height);
+  slashTrail.push({ x, y, t: performance.now() });
+  if (slashTrail.length > 120) slashTrail.shift();
+  swordGlow.x = x; swordGlow.y = y; swordGlow.active = true; swordGlow.mag = 15;
+}, { passive: false });
+
+// ═══════════════════════════════════════════════════════════
+// PHONE DATA HANDLER
+// ═══════════════════════════════════════════════════════════
+let calibrated = false;
+let calBeta = 0, calGamma = 0;
+
+function handlePhoneData(data) {
+  if (!data || typeof data !== 'object') return;
+
+  if (data.type === 'calibrate') {
+    // BUG FIX: store calibration reference angles sent from phone
+    calBeta  = data.beta  || 0;
+    calGamma = data.gamma || 0;
+    calibrated = true;
+    // Acknowledge so phone knows calibration was received
+    try { conn && conn.send({ type: 'cal_ack' }); } catch(e) {}
+    return;
+  }
+
+  if (data.type === 'slash') return; // phone-side haptic already fired
+
+  if (data.type === 'sensor') {
+    const { alpha, beta, gamma, ax, ay, az, mag } = data;
+
+    // Update sensor bars
+    updateSensorBar('alpha', alpha, 0, 360);
+    updateSensorBar('beta',  beta,  -180, 180);
+    updateSensorBar('gamma', gamma, -90, 90);
+    updateSensorBar('ax', (ax||0), -20, 20);
+    updateSensorBar('ay', (ay||0), -20, 20);
+
+    // ── BUG FIX: correct sensor → screen mapping ──────────────
+    // When phone is held upright in portrait: beta ≈ 90°, gamma ≈ 0°
+    // After calibration, relBeta ≈ 0 and relGamma ≈ 0 = centre of screen.
+    // We use a ±45° window around centre → maps to full screen width/height.
+    // Without calibration, assume phone is upright (beta≈90) so subtract 90.
+    const refBeta  = calibrated ? calBeta  : 90;
+    const refGamma = calibrated ? calGamma : 0;
+
+    const relGamma = gamma - refGamma;  // left/right from neutral
+    const relBeta  = beta  - refBeta;   // forward/back from neutral
+
+    // ±45° window → 0..1 (clamped)
+    const normX = Math.max(0, Math.min(1, (relGamma + 45) / 90));
+    const normY = Math.max(0, Math.min(1, (relBeta  + 45) / 90));
+
+    const swordX = normX * canvas.width;
+    const swordY = normY * canvas.height;
+
+    const now = performance.now();
+    slashTrail.push({ x: swordX, y: swordY, t: now });
+    if (slashTrail.length > 120) slashTrail.shift();
+
+    swordGlow.x = swordX;
+    swordGlow.y = swordY;
+    swordGlow.active = true;
+    swordGlow.mag = Math.abs(mag || 0);
+  }
+}
+
+function updateSensorBar(key, val, min, max) {
+  const norm = (val - min) / (max - min);
+  const pct = Math.max(0, Math.min(100, norm * 100));
+  const bar = document.getElementById(`bar-${key}`);
+  const txt = document.getElementById(`val-${key}`);
+  if (bar) bar.style.width = pct + '%';
+  if (txt) txt.textContent = typeof val === 'number' ? val.toFixed(1) : '–';
+}
+
+// ═══════════════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════════════
+initPeer();
+gameState.lastTime = performance.now();
+requestAnimationFrame(gameLoop);
+</script>
+</body>
+</html>

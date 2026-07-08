@@ -1,0 +1,773 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Motion Ninja – Sword Controller</title>
+  <meta name="description" content="Phone sword controller for Motion Fruit Ninja. Swing your phone to slash!" />
+
+  <!-- PeerJS CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;900&display=swap" rel="stylesheet" />
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #07071a;
+      --card: rgba(255,255,255,0.05);
+      --border: rgba(255,255,255,0.08);
+      --accent: #7f5af0;
+      --accent2: #2cb67d;
+      --danger: #ff4757;
+      --text: #fffffe;
+      --sub: rgba(255,255,255,0.55);
+    }
+
+    html, body {
+      width: 100%; height: 100%;
+      min-height: 100dvh;
+      background: var(--bg);
+      font-family: 'Outfit', sans-serif;
+      color: var(--text);
+      overflow-x: hidden;
+      overflow-y: auto;
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    /* Animated bg blobs */
+    .blob {
+      position: fixed;
+      border-radius: 50%;
+      filter: blur(80px);
+      opacity: 0.18;
+      pointer-events: none;
+      animation: drift 8s ease-in-out infinite alternate;
+    }
+    .blob-1 { width: 300px; height: 300px; background: var(--accent); top: -80px; left: -80px; animation-delay: 0s; }
+    .blob-2 { width: 250px; height: 250px; background: var(--accent2); bottom: -60px; right: -60px; animation-delay: -4s; }
+
+    @keyframes drift {
+      0%   { transform: translate(0, 0) scale(1); }
+      100% { transform: translate(30px, 40px) scale(1.12); }
+    }
+
+    /* ── Main Layout ──── */
+    #main {
+      position: relative;
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 28px 20px 40px;
+      gap: 20px;
+      z-index: 1;
+    }
+
+    /* Logo */
+    .logo {
+      font-size: 22px;
+      font-weight: 900;
+      letter-spacing: -0.5px;
+      background: linear-gradient(135deg, #7f5af0, #2cb67d);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    /* Connection card */
+    #conn-card {
+      width: 100%;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .card-title {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: var(--sub);
+    }
+
+    #conn-status-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    #conn-dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      background: #555;
+      flex-shrink: 0;
+      transition: background 0.4s, box-shadow 0.4s;
+    }
+    #conn-dot.connecting { background: #ffd700; box-shadow: 0 0 10px #ffd700; animation: blink 1s ease-in-out infinite; }
+    #conn-dot.connected  { background: var(--accent2); box-shadow: 0 0 12px var(--accent2); }
+    #conn-dot.error      { background: var(--danger); box-shadow: 0 0 10px var(--danger); }
+
+    @keyframes blink { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
+
+    #peer-target {
+      font-size: 11px;
+      font-family: 'Courier New', monospace;
+      color: var(--sub);
+      word-break: break-all;
+      background: rgba(0,0,0,0.3);
+      padding: 8px 10px;
+      border-radius: 8px;
+    }
+
+    /* Calibrate / Enable button */
+    #enable-btn {
+      width: 100%;
+      padding: 22px;
+      border: none; outline: none;
+      border-radius: 20px;
+      font-family: 'Outfit', sans-serif;
+      font-size: 18px;
+      font-weight: 900;
+      letter-spacing: 0.5px;
+      cursor: pointer;
+      background: linear-gradient(135deg, var(--accent), #6344c8);
+      color: #fff;
+      box-shadow: 0 8px 40px rgba(127,90,240,0.5), inset 0 1px 0 rgba(255,255,255,0.15);
+      position: relative;
+      overflow: hidden;
+      transition: transform 0.15s, box-shadow 0.15s, opacity 0.3s;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+    }
+
+    #enable-btn:disabled {
+      opacity: 0.5;
+      pointer-events: none;
+    }
+
+    #enable-btn:active {
+      transform: scale(0.97);
+      box-shadow: 0 4px 20px rgba(127,90,240,0.4);
+    }
+
+    #enable-btn .btn-icon { font-size: 32px; }
+    #enable-btn .btn-sub  { font-size: 12px; font-weight: 600; opacity: 0.75; }
+
+    #enable-btn::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, rgba(255,255,255,0.12), transparent);
+      pointer-events: none;
+    }
+
+    /* Calibrate button */
+    #cal-btn {
+      width: 100%;
+      padding: 16px;
+      border: 1.5px solid var(--accent);
+      outline: none;
+      border-radius: 16px;
+      font-family: 'Outfit', sans-serif;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      background: rgba(127,90,240,0.12);
+      color: var(--accent);
+      letter-spacing: 0.5px;
+      transition: background 0.2s, transform 0.1s;
+      display: none;
+    }
+
+    #cal-btn:active { transform: scale(0.97); background: rgba(127,90,240,0.22); }
+
+    /* Live sensor display */
+    #sensor-panel {
+      display: none;
+      width: 100%;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 20px;
+      gap: 16px;
+      flex-direction: column;
+    }
+
+    #sensor-panel.show { display: flex; }
+
+    .sensor-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 10px;
+    }
+
+    .sensor-box {
+      background: rgba(0,0,0,0.3);
+      border-radius: 12px;
+      padding: 12px 8px;
+      text-align: center;
+    }
+
+    .sensor-box .val {
+      font-size: 20px;
+      font-weight: 900;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      line-height: 1;
+    }
+
+    .sensor-box .lbl {
+      font-size: 9px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--sub);
+      margin-top: 4px;
+    }
+
+    /* Motion visualiser */
+    #motion-vis {
+      width: 100%;
+      height: 160px;
+      position: relative;
+      overflow: hidden;
+      border-radius: 16px;
+      background: rgba(0,0,0,0.3);
+      border: 1px solid var(--border);
+    }
+
+    #vis-canvas {
+      width: 100%; height: 100%;
+    }
+
+    /* Slash indicator */
+    #slash-flash {
+      position: fixed;
+      inset: 0;
+      background: rgba(127,90,240,0.35);
+      pointer-events: none;
+      opacity: 0;
+      z-index: 100;
+      transition: opacity 0.05s;
+    }
+
+    /* Tips */
+    .tip-card {
+      width: 100%;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 16px;
+      font-size: 13px;
+      color: var(--sub);
+      line-height: 1.6;
+    }
+
+    .tip-card strong { color: var(--text); }
+
+    /* Accel power meter */
+    #power-ring-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+    }
+
+    #power-ring-canvas {
+      width: 110px;
+      height: 110px;
+    }
+
+    .power-label {
+      font-size: 10px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--sub);
+    }
+
+    /* No peer error */
+    #no-peer {
+      display: none;
+      width: 100%;
+      background: rgba(255,71,87,0.12);
+      border: 1px solid rgba(255,71,87,0.3);
+      border-radius: 16px;
+      padding: 20px;
+      text-align: center;
+      font-size: 14px;
+      color: var(--danger);
+      line-height: 1.6;
+    }
+  </style>
+</head>
+<body>
+
+<div class="blob blob-1"></div>
+<div class="blob blob-2"></div>
+<div id="slash-flash"></div>
+
+<div id="main">
+  <div class="logo">⚔️ Sword Controller</div>
+
+  <!-- Connection status -->
+  <div id="conn-card">
+    <div class="card-title">📶 Connection</div>
+    <div id="conn-status-row">
+      <div id="conn-dot" class="connecting"></div>
+      <span id="conn-text">Connecting to desktop…</span>
+    </div>
+    <div id="peer-target">Target: loading…</div>
+  </div>
+
+  <!-- No peer ID warning -->
+  <div id="no-peer">
+    ⚠️ No desktop peer ID found.<br />
+    Please scan the QR code from the desktop game screen.
+  </div>
+
+  <!-- Big enable button -->
+  <button id="enable-btn" onclick="requestSensors()">
+    <span class="btn-icon">🗡️</span>
+    <span>Calibrate &amp; Enable Sword</span>
+    <span class="btn-sub">Tap to grant motion permissions</span>
+  </button>
+
+  <!-- Calibrate -->
+  <button id="cal-btn" id="cal-btn" onclick="calibrate()">🎯 Re-Calibrate Position</button>
+
+  <!-- Live sensor panel -->
+  <div id="sensor-panel">
+    <div class="card-title">📡 Live Sensors</div>
+    <div class="sensor-grid">
+      <div class="sensor-box"><div class="val" id="m-alpha">–</div><div class="lbl">Alpha</div></div>
+      <div class="sensor-box"><div class="val" id="m-beta">–</div><div class="lbl">Beta</div></div>
+      <div class="sensor-box"><div class="val" id="m-gamma">–</div><div class="lbl">Gamma</div></div>
+      <div class="sensor-box"><div class="val" id="m-ax">–</div><div class="lbl">Accel X</div></div>
+      <div class="sensor-box"><div class="val" id="m-ay">–</div><div class="lbl">Accel Y</div></div>
+      <div class="sensor-box"><div class="val" id="m-mag">–</div><div class="lbl">Magnitude</div></div>
+    </div>
+
+    <!-- Power ring + visualiser -->
+    <div style="display:flex;gap:12px;align-items:center;">
+      <div id="power-ring-wrap">
+        <canvas id="power-ring-canvas" width="110" height="110"></canvas>
+        <div class="power-label">Swing Power</div>
+      </div>
+      <div id="motion-vis" style="flex:1;">
+        <canvas id="vis-canvas"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tips -->
+  <div class="tip-card">
+    <strong>Tips for best gameplay:</strong><br />
+    • Hold phone <strong>upright</strong> and tap calibrate<br />
+    • Make <strong>fast sweeping motions</strong> to slash<br />
+    • Point phone at screen and tilt to aim<br />
+    • Avoid bombs 💣 — they cost a life!
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════
+// URL PARAMS
+// ═══════════════════════════════════════════════════════════
+const params = new URLSearchParams(window.location.search);
+const targetPeerId = params.get('peer');
+
+document.getElementById('peer-target').textContent =
+  targetPeerId ? `Target: ${targetPeerId.slice(0, 16)}…` : 'No peer ID found';
+
+if (!targetPeerId) {
+  document.getElementById('no-peer').style.display = 'block';
+  document.getElementById('enable-btn').disabled = true;
+}
+
+// ═══════════════════════════════════════════════════════════
+// PEER CONNECTION
+// ═══════════════════════════════════════════════════════════
+let peer = null;
+let conn = null;
+let connected = false;
+
+function setConnStatus(state, text) {
+  const dot = document.getElementById('conn-dot');
+  dot.className = state;
+  document.getElementById('conn-text').textContent = text;
+}
+
+function initPeer() {
+  if (!targetPeerId) return;
+  peer = new Peer({ debug: 0 });
+
+  peer.on('open', () => {
+    setConnStatus('connecting', 'Connecting to desktop…');
+    conn = peer.connect(targetPeerId, { reliable: false, serialization: 'json' });
+
+    conn.on('open', () => {
+      connected = true;
+      setConnStatus('connected', 'Connected to desktop ✓');
+    });
+
+    conn.on('data', (data) => {
+      if (!data) return;
+      if (data.type === 'slash_confirm') triggerSlashFeedback();
+      // Desktop confirmed calibration was received — stop retry loop
+      if (data.type === 'cal_ack') {
+        clearTimeout(calRetryTimer);
+        flashScreen('#2cb67d');
+      }
+    });
+
+    conn.on('close', () => {
+      connected = false;
+      setConnStatus('error', 'Disconnected – retrying…');
+      setTimeout(initPeer, 2000);
+    });
+
+    conn.on('error', (e) => {
+      console.error(e);
+      setConnStatus('error', 'Connection error');
+    });
+  });
+
+  peer.on('error', (e) => {
+    console.error('peer error', e);
+    setConnStatus('error', 'Peer error – retrying…');
+    setTimeout(initPeer, 3000);
+  });
+}
+
+initPeer();
+
+// ═══════════════════════════════════════════════════════════
+// SENSOR PERMISSIONS
+// ═══════════════════════════════════════════════════════════
+let sensorEnabled = false;
+let orientData = { alpha: 0, beta: 0, gamma: 0 };
+let motionData  = { ax: 0, ay: 0, az: 0 };
+let magHistory = [];
+
+async function requestSensors() {
+  const btn = document.getElementById('enable-btn');
+  btn.disabled = true;
+
+  try {
+    // iOS requires explicit permission request
+    if (typeof DeviceOrientationEvent !== 'undefined' &&
+        typeof DeviceOrientationEvent.requestPermission === 'function') {
+      const res1 = await DeviceOrientationEvent.requestPermission();
+      if (res1 !== 'granted') throw new Error('Orientation permission denied');
+    }
+
+    if (typeof DeviceMotionEvent !== 'undefined' &&
+        typeof DeviceMotionEvent.requestPermission === 'function') {
+      const res2 = await DeviceMotionEvent.requestPermission();
+      if (res2 !== 'granted') throw new Error('Motion permission denied');
+    }
+
+    startSensors();
+    btn.style.display = 'none';
+    document.getElementById('cal-btn').style.display = 'block';
+    document.getElementById('sensor-panel').classList.add('show');
+
+    // BUG FIX: wait 800ms for the first real deviceorientation event to arrive
+    // before sending calibration, instead of calling calibrate() with zeros
+    setTimeout(() => calibrateWhenReady(), 800);
+
+  } catch (err) {
+    console.error(err);
+    btn.disabled = false;
+    btn.querySelector('.btn-sub').textContent = '⚠️ Permission denied – tap to retry';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// SENSOR LISTENERS
+// ═══════════════════════════════════════════════════════════
+let sendInterval = null;
+
+function startSensors() {
+  sensorEnabled = true;
+
+  window.addEventListener('deviceorientation', (e) => {
+    orientData.alpha = e.alpha || 0;
+    orientData.beta  = e.beta  || 0;
+    orientData.gamma = e.gamma || 0;
+  }, { passive: true });
+
+  window.addEventListener('devicemotion', (e) => {
+    const a = e.accelerationIncludingGravity || {};
+    motionData.ax = a.x || 0;
+    motionData.ay = a.y || 0;
+    motionData.az = a.z || 0;
+
+    const mag = Math.sqrt(motionData.ax ** 2 + motionData.ay ** 2 + motionData.az ** 2);
+    magHistory.push(mag);
+    if (magHistory.length > 6) magHistory.shift();
+
+    // Detect sharp slash gesture
+    detectSlash(mag);
+  }, { passive: true });
+
+  // Stream data at ~60fps (throttled to ~30fps over DataChannel to stay fast)
+  sendInterval = setInterval(sendSensorData, 33);
+}
+
+function sendSensorData() {
+  if (!connected || !conn) return;
+
+  const avgMag = magHistory.reduce((a, b) => a + b, 0) / (magHistory.length || 1);
+
+  const payload = {
+    type: 'sensor',
+    alpha: orientData.alpha,
+    beta:  orientData.beta,
+    gamma: orientData.gamma,
+    ax: motionData.ax,
+    ay: motionData.ay,
+    az: motionData.az,
+    mag: avgMag,
+    ts: Date.now(),
+  };
+
+  try {
+    conn.send(payload);
+  } catch(e) {}
+
+  // Update UI
+  document.getElementById('m-alpha').textContent = orientData.alpha.toFixed(0);
+  document.getElementById('m-beta').textContent  = orientData.beta.toFixed(0);
+  document.getElementById('m-gamma').textContent = orientData.gamma.toFixed(0);
+  document.getElementById('m-ax').textContent    = motionData.ax.toFixed(1);
+  document.getElementById('m-ay').textContent    = motionData.ay.toFixed(1);
+  document.getElementById('m-mag').textContent   = avgMag.toFixed(1);
+
+  drawPowerRing(avgMag);
+  pushVisHistory(avgMag);
+  drawVisCanvas();
+}
+
+// ═══════════════════════════════════════════════════════════
+// CALIBRATION
+// ═══════════════════════════════════════════════════════════
+let calRetryTimer = null;
+
+// BUG FIX: Retry calibration until connection is open AND real sensor data is available
+function calibrateWhenReady() {
+  clearTimeout(calRetryTimer);
+  // Check we have real orientation data (beta != 0 means a real event fired)
+  const hasSensorData = orientData.beta !== 0 || orientData.gamma !== 0;
+  if (!connected || !hasSensorData) {
+    calRetryTimer = setTimeout(calibrateWhenReady, 500);
+    return;
+  }
+  calibrate();
+}
+
+function calibrate() {
+  if (!connected || !conn) {
+    // Queue a retry rather than silently dropping
+    calRetryTimer = setTimeout(calibrateWhenReady, 500);
+    return;
+  }
+  const payload = {
+    type: 'calibrate',
+    alpha: orientData.alpha,
+    beta:  orientData.beta,
+    gamma: orientData.gamma,
+  };
+  try { conn.send(payload); } catch(e) {}
+
+  // Flash feedback
+  flashScreen('#2cb67d');
+  navigator.vibrate && navigator.vibrate([30, 20, 30]);
+}
+
+// Listen for cal_ack from desktop confirming calibration received
+const _origConnData = (data) => {
+  if (data && data.type === 'cal_ack') {
+    clearTimeout(calRetryTimer); // stop retrying once acknowledged
+    flashScreen('#2cb67d');
+  }
+};
+
+// ═══════════════════════════════════════════════════════════
+// SLASH DETECTION
+// ═══════════════════════════════════════════════════════════
+let lastSlashTime = 0;
+const SLASH_THRESHOLD = 22; // m/s² magnitude spike
+
+function detectSlash(mag) {
+  const now = Date.now();
+  if (mag > SLASH_THRESHOLD && now - lastSlashTime > 300) {
+    lastSlashTime = now;
+    triggerSlashFeedback();
+    // Notify desktop
+    if (connected && conn) {
+      try { conn.send({ type: 'slash', mag, ts: now }); } catch(e) {}
+    }
+  }
+}
+
+function triggerSlashFeedback() {
+  navigator.vibrate && navigator.vibrate([15, 10, 25]);
+  flashScreen('rgba(127,90,240,0.6)');
+}
+
+function flashScreen(color) {
+  const el = document.getElementById('slash-flash');
+  el.style.background = color;
+  el.style.opacity = '1';
+  setTimeout(() => { el.style.opacity = '0'; }, 120);
+}
+
+// ═══════════════════════════════════════════════════════════
+// POWER RING CANVAS
+// ═══════════════════════════════════════════════════════════
+const ringCanvas = document.getElementById('power-ring-canvas');
+const ringCtx = ringCanvas.getContext('2d');
+
+function drawPowerRing(mag) {
+  const w = ringCanvas.width, h = ringCanvas.height;
+  const cx = w / 2, cy = h / 2;
+  const r = Math.min(w, h) * 0.42;
+  const pct = Math.min(1, mag / 40);
+
+  ringCtx.clearRect(0, 0, w, h);
+
+  // Track
+  ringCtx.beginPath();
+  ringCtx.arc(cx, cy, r, 0, Math.PI * 2);
+  ringCtx.strokeStyle = 'rgba(255,255,255,0.07)';
+  ringCtx.lineWidth = 8;
+  ringCtx.stroke();
+
+  // Fill
+  if (pct > 0) {
+    const grad = ringCtx.createLinearGradient(0, 0, w, h);
+    const hue = 260 - pct * 120; // purple → green
+    grad.addColorStop(0, `hsl(${hue}, 90%, 65%)`);
+    grad.addColorStop(1, `hsl(${hue + 40}, 90%, 55%)`);
+
+    ringCtx.beginPath();
+    ringCtx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + pct * Math.PI * 2);
+    ringCtx.strokeStyle = grad;
+    ringCtx.lineWidth = 8;
+    ringCtx.lineCap = 'round';
+    ringCtx.stroke();
+  }
+
+  // Center text
+  ringCtx.fillStyle = '#fff';
+  ringCtx.textAlign = 'center';
+  ringCtx.textBaseline = 'middle';
+  ringCtx.font = `bold ${w * 0.2}px 'Outfit', sans-serif`;
+  ringCtx.fillText(mag.toFixed(0), cx, cy - 4);
+  ringCtx.font = `${w * 0.1}px 'Outfit', sans-serif`;
+  ringCtx.fillStyle = 'rgba(255,255,255,0.45)';
+  ringCtx.fillText('m/s²', cx, cy + 14);
+}
+
+// ═══════════════════════════════════════════════════════════
+// MOTION VISUALISER
+// ═══════════════════════════════════════════════════════════
+const visCanvas = document.getElementById('vis-canvas');
+const visCtx = visCanvas.getContext('2d');
+let visHistory = [];
+
+function resizeVisCanvas() {
+  const wrap = document.getElementById('motion-vis');
+  visCanvas.width  = wrap.clientWidth;
+  visCanvas.height = wrap.clientHeight;
+}
+
+function pushVisHistory(mag) {
+  visHistory.push(mag);
+  if (visHistory.length > 80) visHistory.shift();
+}
+
+function drawVisCanvas() {
+  const w = visCanvas.width, h = visCanvas.height;
+  if (!w || !h) return;
+
+  visCtx.clearRect(0, 0, w, h);
+
+  if (visHistory.length < 2) return;
+
+  const maxMag = 40;
+  const step = w / (visHistory.length - 1);
+
+  // Gradient fill
+  const fillGrad = visCtx.createLinearGradient(0, 0, 0, h);
+  fillGrad.addColorStop(0, 'rgba(127,90,240,0.45)');
+  fillGrad.addColorStop(1, 'rgba(127,90,240,0)');
+
+  visCtx.beginPath();
+  visHistory.forEach((v, i) => {
+    const x = i * step;
+    const y = h - (v / maxMag) * h * 0.92;
+    i === 0 ? visCtx.moveTo(x, y) : visCtx.lineTo(x, y);
+  });
+  visCtx.lineTo((visHistory.length - 1) * step, h);
+  visCtx.lineTo(0, h);
+  visCtx.closePath();
+  visCtx.fillStyle = fillGrad;
+  visCtx.fill();
+
+  // Line
+  visCtx.beginPath();
+  visHistory.forEach((v, i) => {
+    const x = i * step;
+    const y = h - (v / maxMag) * h * 0.92;
+    i === 0 ? visCtx.moveTo(x, y) : visCtx.lineTo(x, y);
+  });
+  visCtx.strokeStyle = 'rgba(127,90,240,0.9)';
+  visCtx.lineWidth = 2;
+  visCtx.lineJoin = 'round';
+  visCtx.stroke();
+
+  // Slash threshold line
+  const threshY = h - (SLASH_THRESHOLD / maxMag) * h * 0.92;
+  visCtx.setLineDash([4, 4]);
+  visCtx.beginPath();
+  visCtx.moveTo(0, threshY);
+  visCtx.lineTo(w, threshY);
+  visCtx.strokeStyle = 'rgba(255,71,87,0.5)';
+  visCtx.lineWidth = 1.5;
+  visCtx.stroke();
+  visCtx.setLineDash([]);
+
+  // Label
+  visCtx.fillStyle = 'rgba(255,71,87,0.7)';
+  visCtx.font = '9px sans-serif';
+  visCtx.textAlign = 'right';
+  visCtx.fillText('SLASH', w - 4, threshY - 4);
+}
+
+window.addEventListener('resize', () => {
+  resizeVisCanvas();
+});
+
+// Resize on panel show
+const observer = new MutationObserver(() => {
+  if (document.getElementById('sensor-panel').classList.contains('show')) {
+    resizeVisCanvas();
+  }
+});
+observer.observe(document.getElementById('sensor-panel'), { attributes: true });
+</script>
+</body>
+</html>
