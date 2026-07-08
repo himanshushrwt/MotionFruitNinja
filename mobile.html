@@ -309,6 +309,55 @@
       color: var(--danger);
       line-height: 1.6;
     }
+
+    /* Touch sword pad */
+    #touch-pad {
+      width: 100%;
+      height: 220px;
+      background: rgba(127,90,240,0.07);
+      border: 2px dashed rgba(127,90,240,0.35);
+      border-radius: 24px;
+      position: relative;
+      touch-action: none;
+      cursor: crosshair;
+      overflow: hidden;
+      transition: border-color 0.2s;
+    }
+    #touch-pad:active { border-color: rgba(127,90,240,0.8); }
+
+    #touch-pad-hint {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 15px;
+      font-weight: 700;
+      color: rgba(255,255,255,0.3);
+      pointer-events: none;
+    }
+
+    #touch-dot {
+      position: absolute;
+      width: 36px; height: 36px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(180,130,255,1), rgba(100,200,255,0.4));
+      box-shadow: 0 0 20px rgba(180,130,255,0.9);
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.15s;
+      top: 50%; left: 50%;
+    }
+
+    #pkt-counter {
+      position: absolute;
+      bottom: 10px; right: 14px;
+      font-size: 11px;
+      font-weight: 700;
+      color: rgba(127,90,240,0.7);
+      letter-spacing: 1px;
+    }
   </style>
 </head>
 <body>
@@ -370,12 +419,18 @@
     </div>
   </div>
 
+  <!-- Touch sword pad — drag finger to control sword directly -->
+  <div id="touch-pad">
+    <div id="touch-pad-hint">☝️ Drag here to control sword</div>
+    <div id="touch-dot"></div>
+    <div id="pkt-counter">📡 <span id="pkt-num">0</span> packets sent</div>
+  </div>
+
   <!-- Tips -->
   <div class="tip-card">
-    <strong>Tips for best gameplay:</strong><br />
-    • Hold phone <strong>upright</strong> and tap calibrate<br />
-    • Make <strong>fast sweeping motions</strong> to slash<br />
-    • Point phone at screen and tilt to aim<br />
+    <strong>Two ways to slash:</strong><br />
+    • <strong>Gyro:</strong> Swing phone in the air (enable above)<br />
+    • <strong>Touch:</strong> Drag finger on the pad above<br />
     • Avoid bombs 💣 — they cost a life!
   </div>
 </div>
@@ -414,7 +469,7 @@ function initPeer() {
 
   peer.on('open', () => {
     setConnStatus('connecting', 'Connecting to desktop…');
-    conn = peer.connect(targetPeerId, { reliable: false, serialization: 'json' });
+    conn = peer.connect(targetPeerId, { reliable: true, serialization: 'json' });
 
     conn.on('open', () => {
       connected = true;
@@ -459,6 +514,7 @@ let sensorEnabled = false;
 let orientData = { alpha: 0, beta: 0, gamma: 0 };
 let motionData  = { ax: 0, ay: 0, az: 0 };
 let magHistory = [];
+let orientationFired = false; // true once first real deviceorientation event arrives
 
 async function requestSensors() {
   const btn = document.getElementById('enable-btn');
@@ -506,6 +562,7 @@ function startSensors() {
     orientData.alpha = e.alpha || 0;
     orientData.beta  = e.beta  || 0;
     orientData.gamma = e.gamma || 0;
+    orientationFired = true; // mark that real data arrived
   }, { passive: true });
 
   window.addEventListener('devicemotion', (e) => {
@@ -545,6 +602,9 @@ function sendSensorData() {
 
   try {
     conn.send(payload);
+    pktCount++;
+    const el = document.getElementById('pkt-num');
+    if (el) el.textContent = pktCount;
   } catch(e) {}
 
   // Update UI
@@ -568,9 +628,8 @@ let calRetryTimer = null;
 // BUG FIX: Retry calibration until connection is open AND real sensor data is available
 function calibrateWhenReady() {
   clearTimeout(calRetryTimer);
-  // Check we have real orientation data (beta != 0 means a real event fired)
-  const hasSensorData = orientData.beta !== 0 || orientData.gamma !== 0;
-  if (!connected || !hasSensorData) {
+  // Use the orientationFired flag instead of checking for non-zero values
+  if (!connected || !orientationFired) {
     calRetryTimer = setTimeout(calibrateWhenReady, 500);
     return;
   }
@@ -608,7 +667,7 @@ const _origConnData = (data) => {
 // SLASH DETECTION
 // ═══════════════════════════════════════════════════════════
 let lastSlashTime = 0;
-const SLASH_THRESHOLD = 22; // m/s² magnitude spike
+const SLASH_THRESHOLD = 15; // m/s² magnitude spike — lowered for easier triggering
 
 function detectSlash(mag) {
   const now = Date.now();
@@ -768,6 +827,96 @@ const observer = new MutationObserver(() => {
   }
 });
 observer.observe(document.getElementById('sensor-panel'), { attributes: true });
+
+// ═══════════════════════════════════════════════════════════
+// TOUCH PAD — drag finger to control sword directly
+// ═══════════════════════════════════════════════════════════
+let pktCount = 0;
+
+const touchPad = document.getElementById('touch-pad');
+const touchDot = document.getElementById('touch-dot');
+const padHint  = document.getElementById('touch-pad-hint');
+
+function sendTouchSword(normX, normY, isFast) {
+  if (!connected || !conn) return;
+  // Send as a sensor packet but with touch-derived position
+  // We encode position back into beta/gamma so the desktop mapping works
+  // normX 0..1 → gamma -45..+45
+  // normY 0..1 → beta  -45..+45
+  const fakeGamma = (normX - 0.5) * 90 + (calGamma || 0);
+  const fakeBeta  = (normY - 0.5) * 90 + (calBeta  || 90);
+  const payload = {
+    type: 'sensor',
+    alpha: 0,
+    beta:  fakeBeta,
+    gamma: fakeGamma,
+    ax: isFast ? 20 : 5,
+    ay: isFast ? 20 : 5,
+    az: 9.8,
+    mag: isFast ? 25 : 5,
+    ts: Date.now(),
+  };
+  try {
+    conn.send(payload);
+    pktCount++;
+    const el = document.getElementById('pkt-num');
+    if (el) el.textContent = pktCount;
+  } catch(e) {}
+}
+
+let lastTouchX = 0, lastTouchY = 0;
+let touchActive = false;
+
+function getPadNorm(e) {
+  const rect = touchPad.getBoundingClientRect();
+  const touch = e.touches ? e.touches[0] : e;
+  const nx = Math.max(0, Math.min(1, (touch.clientX - rect.left)  / rect.width));
+  const ny = Math.max(0, Math.min(1, (touch.clientY - rect.top)   / rect.height));
+  return { nx, ny };
+}
+
+touchPad.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  touchActive = true;
+  padHint.style.opacity = '0';
+  touchDot.style.opacity = '1';
+  const { nx, ny } = getPadNorm(e);
+  lastTouchX = nx; lastTouchY = ny;
+  touchDot.style.left = (nx * 100) + '%';
+  touchDot.style.top  = (ny * 100) + '%';
+  sendTouchSword(nx, ny, false);
+}, { passive: false });
+
+touchPad.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  const { nx, ny } = getPadNorm(e);
+  // Detect fast swipe
+  const dx = nx - lastTouchX;
+  const dy = ny - lastTouchY;
+  const speed = Math.sqrt(dx*dx + dy*dy);
+  const isFast = speed > 0.05;
+  if (isFast) { navigator.vibrate && navigator.vibrate(10); }
+  lastTouchX = nx; lastTouchY = ny;
+  touchDot.style.left = (nx * 100) + '%';
+  touchDot.style.top  = (ny * 100) + '%';
+  sendTouchSword(nx, ny, isFast);
+}, { passive: false });
+
+touchPad.addEventListener('touchend', (e) => {
+  e.preventDefault();
+  touchActive = false;
+  touchDot.style.opacity = '0';
+}, { passive: false });
+
+// Also wire calGamma/calBeta for touch mode
+let calGamma = 0, calBeta = 90;
+// Override calibrate to also capture reference for touch
+const _origCalibrate = calibrate;
+window.calibrate = function() {
+  calGamma = orientData.gamma;
+  calBeta  = orientData.beta || 90;
+  _origCalibrate();
+};
 </script>
 </body>
 </html>
