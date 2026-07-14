@@ -551,8 +551,8 @@ function initPeer() {
 let mqttClient = null;
 
 function initMqtt(roomId) {
-  logDebug('Connecting to Cloud Relay WebSockets...');
-  mqttClient = mqtt.connect('wss://broker.hivemq.com:8884/mqtt');
+  logDebug('Connecting to Cloud Relay WebSockets (Eclipse IoT)...');
+  mqttClient = mqtt.connect('wss://mqtt.eclipseprojects.io/mqtt');
 
   mqttClient.on('connect', () => {
     logDebug('Cloud Relay WebSocket established! ✓');
@@ -639,17 +639,7 @@ async function requestSensors() {
       if (res2 !== 'granted') throw new Error('Motion permission denied');
     }
 
-    // Bypass mDNS local IP hiding on hotspot by temporary camera access request
-    logDebug('Requesting temporary camera access to expose local IP...');
-    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-        stream.getTracks().forEach(track => track.stop());
-        logDebug('Local IP exposed successfully! ✓');
-      } catch (camErr) {
-        logDebug('Camera permission denied, WebRTC local connectivity might be limited.', true);
-      }
-    }
+
 
     startSensors();
     btn.style.display = 'none';

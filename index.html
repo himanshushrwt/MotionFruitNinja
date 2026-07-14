@@ -1391,8 +1391,8 @@ function initPeer() {
 // FALLBACK MQTT CONNECTION (bypasses CGNAT & hotspots)
 // ═══════════════════════════════════════════════════════════
 function initMqtt(roomId) {
-  console.log("Connecting to fallback MQTT cloud relay...");
-  mqttClient = mqtt.connect('wss://broker.hivemq.com:8884/mqtt');
+  console.log("Connecting to fallback MQTT cloud relay (Eclipse IoT over HTTPS port 443)...");
+  mqttClient = mqtt.connect('wss://mqtt.eclipseprojects.io/mqtt');
 
   mqttClient.on('connect', () => {
     console.log("MQTT Connected! Subscribing to: motion-fruit-ninja/" + roomId + "/mobile");
@@ -1576,22 +1576,6 @@ function startGame() {
   gameState.started = true;
   gameState.lastTime = performance.now();
 }
-
-// Request camera permission to expose local IP for hotspot WebRTC connection
-async function revealLocalIP() {
-  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      stream.getTracks().forEach(track => track.stop());
-      console.log("Local IP exposed via camera permission");
-    } catch(e) {
-      console.warn("Camera permission denied, WebRTC local connection might fail over hotspot.", e);
-    }
-  }
-}
-
-// Trigger local IP reveal on first click anywhere on the page
-document.body.addEventListener('click', revealLocalIP, { once: true });
 
 // ═══════════════════════════════════════════════════════════
 // INIT
