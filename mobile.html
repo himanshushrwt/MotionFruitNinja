@@ -8,8 +8,7 @@
 
   <!-- PeerJS CDN -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
-  <!-- MQTT.js Fallback CDN -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/4.3.7/mqtt.min.js"></script>
+
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;900&display=swap" rel="stylesheet" />
 
   <style>
@@ -497,8 +496,8 @@ function initPeer() {
     logDebug('Opening WebRTC connection to target: ' + targetPeerId);
     conn = peer.connect(targetPeerId, { reliable: true, serialization: 'json' });
 
-    // Start fallback MQTT WebSocket secure connection in parallel
-    initMqtt(targetPeerId);
+    // Start fallback Native WebSocket Relay secure connection in parallel
+    initRelay(targetPeerId);
 
     function handleOpen() {
       if (connected) return;
@@ -546,30 +545,29 @@ function initPeer() {
 }
 
 // ═══════════════════════════════════════════════════════════
-// FALLBACK MQTT CONNECTION (bypasses CGNAT & hotspots)
+// FALLBACK NATIVE WEBSOCKET RELAY (bypasses CGNAT & hotspots)
 // ═══════════════════════════════════════════════════════════
-let mqttClient = null;
+let relaySocket = null;
 
-function initMqtt(roomId) {
-  logDebug('Connecting to Cloud Relay WebSockets (Eclipse IoT)...');
-  mqttClient = mqtt.connect('wss://mqtt.eclipseprojects.io/mqtt');
+function initRelay(roomId) {
+  logDebug('Connecting to Cloud Relay WebSockets...');
+  // Using SocketsBay public sandbox relay (completely free, anonymous, standard SSL port 443)
+  const url = `wss://socketsbay.com/wss/v2/1/motion-ninja-${roomId}/`;
+  relaySocket = new WebSocket(url);
 
-  mqttClient.on('connect', () => {
+  relaySocket.onopen = () => {
     logDebug('Cloud Relay WebSocket established! ✓');
-    
-    // Subscribe to desktop commands
-    mqttClient.subscribe('motion-fruit-ninja/' + roomId + '/desktop');
-    
+
     // If WebRTC isn't open yet, show we're connected via Relay
     if (!conn || !conn.open) {
       setConnStatus('connected', 'Connected via Cloud Relay ✓');
     }
-  });
+  };
 
-  mqttClient.on('message', (topic, message) => {
+  relaySocket.onmessage = (event) => {
     try {
-      const data = JSON.parse(message.toString());
-      if (!data) return;
+      const data = JSON.parse(event.data);
+      if (!data || data.sender === 'phone') return; // ignore our own messages
 
       if (data.type === 'slash_confirm') triggerSlashFeedback();
       if (data.type === 'cal_ack') {
@@ -578,14 +576,21 @@ function initMqtt(roomId) {
         logDebug('Desktop acknowledged calibration.');
       }
     } catch(e) {}
-  });
+  };
 
-  mqttClient.on('error', (err) => {
-    logDebug('Cloud Relay error: ' + err.message, true);
-  });
+  relaySocket.onerror = (err) => {
+    logDebug('Cloud Relay error: connection failed.', true);
+  };
+
+  relaySocket.onclose = () => {
+    logDebug('Cloud Relay disconnected. Retrying...', true);
+    setTimeout(() => initRelay(roomId), 2500);
+  };
 }
 
 function sendDataToDesktop(payload) {
+  payload.sender = 'phone'; // Tag sender to prevent self-broadcast loops
+  
   let sent = false;
   // 1. Try low-latency WebRTC first
   if (conn && conn.open) {
@@ -594,11 +599,10 @@ function sendDataToDesktop(payload) {
       sent = true;
     } catch(e) {}
   }
-  // 2. Fallback to MQTT WebSockets Secure
-  if (!sent && mqttClient && mqttClient.connected) {
+  // 2. Fallback to Native WebSocket Relay
+  if (!sent && relaySocket && relaySocket.readyState === WebSocket.OPEN) {
     try {
-      const topic = 'motion-fruit-ninja/' + targetPeerId + '/mobile';
-      mqttClient.publish(topic, JSON.stringify(payload));
+      relaySocket.send(JSON.stringify(payload));
       sent = true;
     } catch(e) {}
   }
