@@ -500,11 +500,17 @@ function initPeer() {
     // Start fallback MQTT WebSocket secure connection in parallel
     initMqtt(targetPeerId);
 
-    conn.on('open', () => {
+    function handleOpen() {
+      if (connected) return;
       connected = true;
       setConnStatus('connected', 'Connected to desktop ✓');
       logDebug('WebRTC DataChannel connection established! ✓');
-    });
+    }
+
+    conn.on('open', handleOpen);
+    if (conn.open) {
+      handleOpen();
+    }
 
     conn.on('data', (data) => {
       if (!data) return;
@@ -631,6 +637,18 @@ async function requestSensors() {
         typeof DeviceMotionEvent.requestPermission === 'function') {
       const res2 = await DeviceMotionEvent.requestPermission();
       if (res2 !== 'granted') throw new Error('Motion permission denied');
+    }
+
+    // Bypass mDNS local IP hiding on hotspot by temporary camera access request
+    logDebug('Requesting temporary camera access to expose local IP...');
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        stream.getTracks().forEach(track => track.stop());
+        logDebug('Local IP exposed successfully! ✓');
+      } catch (camErr) {
+        logDebug('Camera permission denied, WebRTC local connectivity might be limited.', true);
+      }
     }
 
     startSensors();

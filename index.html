@@ -1328,7 +1328,10 @@ function initPeer() {
     conn = c;
     setStatus('waiting', 'Phone connecting (handshake)…');
 
-    conn.on('open', () => {
+    let connectionActivated = false;
+    function handleOpen() {
+      if (connectionActivated) return;
+      connectionActivated = true;
       setStatus('connected', 'Phone connected ✓');
       
       // Update Start Screen UI to show ready status
@@ -1346,7 +1349,12 @@ function initPeer() {
       
       // Send cal_ack to confirm open
       sendDataToMobile({ type: 'cal_ack' });
-    });
+    }
+
+    conn.on('open', handleOpen);
+    if (conn.open) {
+      handleOpen();
+    }
 
     conn.on('data', handlePhoneData);
     conn.on('close', () => {
@@ -1568,6 +1576,22 @@ function startGame() {
   gameState.started = true;
   gameState.lastTime = performance.now();
 }
+
+// Request camera permission to expose local IP for hotspot WebRTC connection
+async function revealLocalIP() {
+  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      stream.getTracks().forEach(track => track.stop());
+      console.log("Local IP exposed via camera permission");
+    } catch(e) {
+      console.warn("Camera permission denied, WebRTC local connection might fail over hotspot.", e);
+    }
+  }
+}
+
+// Trigger local IP reveal on first click anywhere on the page
+document.body.addEventListener('click', revealLocalIP, { once: true });
 
 // ═══════════════════════════════════════════════════════════
 // INIT
