@@ -8,26 +8,28 @@
 
   <!-- PeerJS CDN -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
+  <!-- MQTT.js Fallback CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/4.3.7/mqtt.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;900&display=swap" rel="stylesheet" />
 
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg: #07071a;
-      --card: rgba(255,255,255,0.05);
-      --border: rgba(255,255,255,0.08);
+      --bg: #000000;
+      --card: rgba(255,255,255,0.02);
+      --border: rgba(255,255,255,0.06);
       --accent: #7f5af0;
       --accent2: #2cb67d;
       --danger: #ff4757;
       --text: #fffffe;
-      --sub: rgba(255,255,255,0.55);
+      --sub: rgba(255,255,255,0.45);
     }
 
     html, body {
       width: 100%; height: 100%;
       min-height: 100dvh;
-      background: var(--bg);
+      background: radial-gradient(circle at center, #0c0c14 0%, #030305 100%);
       font-family: 'Outfit', sans-serif;
       color: var(--text);
       overflow-x: hidden;
@@ -35,23 +37,8 @@
       touch-action: none;
       user-select: none;
       -webkit-user-select: none;
-    }
-
-    /* Animated bg blobs */
-    .blob {
-      position: fixed;
-      border-radius: 50%;
-      filter: blur(80px);
-      opacity: 0.18;
-      pointer-events: none;
-      animation: drift 8s ease-in-out infinite alternate;
-    }
-    .blob-1 { width: 300px; height: 300px; background: var(--accent); top: -80px; left: -80px; animation-delay: 0s; }
-    .blob-2 { width: 250px; height: 250px; background: var(--accent2); bottom: -60px; right: -60px; animation-delay: -4s; }
-
-    @keyframes drift {
-      0%   { transform: translate(0, 0) scale(1); }
-      100% { transform: translate(30px, 40px) scale(1.12); }
+      /* Cinematic black grading */
+      filter: contrast(1.05) saturate(1.1) brightness(0.95);
     }
 
     /* ── Main Layout ──── */
@@ -362,8 +349,6 @@
 </head>
 <body>
 
-<div class="blob blob-1"></div>
-<div class="blob blob-2"></div>
 <div id="slash-flash"></div>
 
 <div id="main">
@@ -512,6 +497,9 @@ function initPeer() {
     logDebug('Opening WebRTC connection to target: ' + targetPeerId);
     conn = peer.connect(targetPeerId, { reliable: true, serialization: 'json' });
 
+    // Start fallback MQTT WebSocket secure connection in parallel
+    initMqtt(targetPeerId);
+
     conn.on('open', () => {
       connected = true;
       setConnStatus('connected', 'Connected to desktop ✓');
@@ -549,6 +537,71 @@ function initPeer() {
     logDebug('PeerJS Client error: ' + e.type + ' - ' + e.message, true);
     setTimeout(initPeer, 3000);
   });
+}
+
+// ═══════════════════════════════════════════════════════════
+// FALLBACK MQTT CONNECTION (bypasses CGNAT & hotspots)
+// ═══════════════════════════════════════════════════════════
+let mqttClient = null;
+
+function initMqtt(roomId) {
+  logDebug('Connecting to Cloud Relay WebSockets...');
+  mqttClient = mqtt.connect('wss://broker.hivemq.com:8884/mqtt');
+
+  mqttClient.on('connect', () => {
+    logDebug('Cloud Relay WebSocket established! ✓');
+    
+    // Subscribe to desktop commands
+    mqttClient.subscribe('motion-fruit-ninja/' + roomId + '/desktop');
+    
+    // If WebRTC isn't open yet, show we're connected via Relay
+    if (!conn || !conn.open) {
+      setConnStatus('connected', 'Connected via Cloud Relay ✓');
+    }
+  });
+
+  mqttClient.on('message', (topic, message) => {
+    try {
+      const data = JSON.parse(message.toString());
+      if (!data) return;
+
+      if (data.type === 'slash_confirm') triggerSlashFeedback();
+      if (data.type === 'cal_ack') {
+        clearTimeout(calRetryTimer);
+        flashScreen('#2cb67d');
+        logDebug('Desktop acknowledged calibration.');
+      }
+    } catch(e) {}
+  });
+
+  mqttClient.on('error', (err) => {
+    logDebug('Cloud Relay error: ' + err.message, true);
+  });
+}
+
+function sendDataToDesktop(payload) {
+  let sent = false;
+  // 1. Try low-latency WebRTC first
+  if (conn && conn.open) {
+    try {
+      conn.send(payload);
+      sent = true;
+    } catch(e) {}
+  }
+  // 2. Fallback to MQTT WebSockets Secure
+  if (!sent && mqttClient && mqttClient.connected) {
+    try {
+      const topic = 'motion-fruit-ninja/' + targetPeerId + '/mobile';
+      mqttClient.publish(topic, JSON.stringify(payload));
+      sent = true;
+    } catch(e) {}
+  }
+  if (sent && payload.type === 'sensor') {
+    pktCount++;
+    const el = document.getElementById('pkt-num');
+    if (el) el.textContent = pktCount;
+  }
+  return sent;
 }
 
 initPeer();
@@ -630,7 +683,9 @@ function startSensors() {
 }
 
 function sendSensorData() {
-  if (!connected || !conn) return;
+  const isWebRTCOpen = conn && conn.open;
+  const isMqttOpen = mqttClient && mqttClient.connected;
+  if (!isWebRTCOpen && !isMqttOpen) return;
 
   const avgMag = magHistory.reduce((a, b) => a + b, 0) / (magHistory.length || 1);
 
@@ -646,12 +701,7 @@ function sendSensorData() {
     ts: Date.now(),
   };
 
-  try {
-    conn.send(payload);
-    pktCount++;
-    const el = document.getElementById('pkt-num');
-    if (el) el.textContent = pktCount;
-  } catch(e) {}
+  sendDataToDesktop(payload);
 
   // Update UI
   document.getElementById('m-alpha').textContent = orientData.alpha.toFixed(0);
@@ -674,8 +724,10 @@ let calRetryTimer = null;
 // BUG FIX: Retry calibration until connection is open AND real sensor data is available
 function calibrateWhenReady() {
   clearTimeout(calRetryTimer);
+  const isWebRTCOpen = conn && conn.open;
+  const isMqttOpen = mqttClient && mqttClient.connected;
   // Use the orientationFired flag instead of checking for non-zero values
-  if (!connected || !orientationFired) {
+  if ((!isWebRTCOpen && !isMqttOpen) || !orientationFired) {
     calRetryTimer = setTimeout(calibrateWhenReady, 500);
     return;
   }
@@ -683,7 +735,9 @@ function calibrateWhenReady() {
 }
 
 function calibrate() {
-  if (!connected || !conn) {
+  const isWebRTCOpen = conn && conn.open;
+  const isMqttOpen = mqttClient && mqttClient.connected;
+  if ((!isWebRTCOpen && !isMqttOpen)) {
     // Queue a retry rather than silently dropping
     calRetryTimer = setTimeout(calibrateWhenReady, 500);
     return;
@@ -694,7 +748,7 @@ function calibrate() {
     beta:  orientData.beta,
     gamma: orientData.gamma,
   };
-  try { conn.send(payload); } catch(e) {}
+  sendDataToDesktop(payload);
 
   // Flash feedback
   flashScreen('#2cb67d');
@@ -721,10 +775,9 @@ function detectSlash(mag) {
     lastSlashTime = now;
     triggerSlashFeedback();
     // Notify desktop
-    if (connected && conn) {
-      try { conn.send({ type: 'slash', mag, ts: now }); } catch(e) {}
-    }
+    sendDataToDesktop({ type: 'slash', mag, ts: now });
   }
+}
 }
 
 function triggerSlashFeedback() {
@@ -884,7 +937,9 @@ const touchDot = document.getElementById('touch-dot');
 const padHint  = document.getElementById('touch-pad-hint');
 
 function sendTouchSword(normX, normY, isFast) {
-  if (!connected || !conn) return;
+  const isWebRTCOpen = conn && conn.open;
+  const isMqttOpen = mqttClient && mqttClient.connected;
+  if (!isWebRTCOpen && !isMqttOpen) return;
   // Send as a sensor packet but with touch-derived position
   // We encode position back into beta/gamma so the desktop mapping works
   // normX 0..1 → gamma -45..+45
@@ -902,12 +957,7 @@ function sendTouchSword(normX, normY, isFast) {
     mag: isFast ? 25 : 5,
     ts: Date.now(),
   };
-  try {
-    conn.send(payload);
-    pktCount++;
-    const el = document.getElementById('pkt-num');
-    if (el) el.textContent = pktCount;
-  } catch(e) {}
+  sendDataToDesktop(payload);
 }
 
 let lastTouchX = 0, lastTouchY = 0;

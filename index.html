@@ -10,6 +10,8 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
   <!-- QRCode.js CDN -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <!-- MQTT.js Fallback CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/4.3.7/mqtt.min.js"></script>
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -1255,6 +1257,7 @@ function restartGame() {
 // ═══════════════════════════════════════════════════════════
 let peer = null;
 let conn = null;
+let mqttClient = null;
 
 // Sensor calibration
 let calibration = { alpha: null, beta: null, gamma: null };
@@ -1316,6 +1319,9 @@ function initPeer() {
       colorLight: '#ffffff',
       correctLevel: QRCode.CorrectLevel.M,
     });
+
+    // Start fallback MQTT WebSocket secure connection in parallel
+    initMqtt(id);
   });
 
   peer.on('connection', (c) => {
@@ -1339,7 +1345,7 @@ function initPeer() {
       }
       
       // Send cal_ack to confirm open
-      try { conn.send({ type: 'cal_ack' }); } catch(e) {}
+      sendDataToMobile({ type: 'cal_ack' });
     });
 
     conn.on('data', handlePhoneData);
@@ -1371,6 +1377,68 @@ function initPeer() {
     setStatus('', 'Connection error – retrying…');
     setTimeout(initPeer, 3000);
   });
+}
+
+// ═══════════════════════════════════════════════════════════
+// FALLBACK MQTT CONNECTION (bypasses CGNAT & hotspots)
+// ═══════════════════════════════════════════════════════════
+function initMqtt(roomId) {
+  console.log("Connecting to fallback MQTT cloud relay...");
+  mqttClient = mqtt.connect('wss://broker.hivemq.com:8884/mqtt');
+
+  mqttClient.on('connect', () => {
+    console.log("MQTT Connected! Subscribing to: motion-fruit-ninja/" + roomId + "/mobile");
+    mqttClient.subscribe('motion-fruit-ninja/' + roomId + '/mobile');
+  });
+
+  mqttClient.on('message', (topic, message) => {
+    try {
+      const data = JSON.parse(message.toString());
+      if (!data) return;
+
+      // If WebRTC is not active, activate start triggers via MQTT relay
+      if (!conn || !conn.open) {
+        setStatus('connected', 'Phone connected (via Cloud Relay) ✓');
+        
+        const badge = document.querySelector('.status-badge');
+        if (badge && !badge.classList.contains('connected')) {
+          badge.classList.add('connected');
+          const badgeText = badge.querySelector('span');
+          if (badgeText) badgeText.textContent = 'Phone Connected ✓';
+        }
+        const startBtn = document.getElementById('start-btn');
+        if (startBtn && !startBtn.classList.contains('ready')) {
+          startBtn.classList.add('ready');
+          startBtn.textContent = 'Start Game';
+        }
+      }
+
+      handlePhoneData(data);
+    } catch(e) {
+      console.error("MQTT parse error:", e);
+    }
+  });
+
+  mqttClient.on('error', (err) => {
+    console.error("MQTT error:", err);
+  });
+}
+
+function sendDataToMobile(payload) {
+  // 1. Try low-latency WebRTC first
+  if (conn && conn.open) {
+    try {
+      conn.send(payload);
+      return;
+    } catch(e) {}
+  }
+  // 2. Fallback to MQTT WebSocket Secure
+  if (mqttClient && mqttClient.connected && peer) {
+    try {
+      const topic = 'motion-fruit-ninja/' + peer.id + '/desktop';
+      mqttClient.publish(topic, JSON.stringify(payload));
+    } catch(e) {}
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1412,8 +1480,8 @@ function handlePhoneData(data) {
     calBeta  = data.beta  || 0;
     calGamma = data.gamma || 0;
     calibrated = true;
-    // Acknowledge so phone knows calibration was received
-    try { conn && conn.send({ type: 'cal_ack' }); } catch(e) {}
+    // Acknowledge so phone knows calibration was received (WebRTC or MQTT)
+    sendDataToMobile({ type: 'cal_ack' });
     return;
   }
 
