@@ -54,6 +54,119 @@
       display: block;
       width: 100%; height: 100%;
       cursor: none;
+      background: #000;
+      /* Cinematic black grading: enhances contrast & saturation slightly */
+      filter: contrast(1.08) saturate(1.15) brightness(0.95);
+    }
+
+    /* ── Start Screen Overlay ─────────────────── */
+    #start-screen {
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at center, #0c0c14 0%, #030305 100%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 20px;
+      z-index: 100;
+      text-align: center;
+      padding: 30px;
+      transition: opacity 0.5s ease, visibility 0.5s ease;
+    }
+    
+    #start-screen.hidden {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+
+    #start-screen h1 {
+      font-size: clamp(32px, 6vw, 68px);
+      font-weight: 900;
+      letter-spacing: -2px;
+      background: linear-gradient(135deg, #ffffff 40%, #888888 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+      text-shadow: 0 0 30px rgba(255,255,255,0.05);
+    }
+
+    #start-screen p {
+      font-size: 16px;
+      color: var(--sub);
+      max-width: 440px;
+      line-height: 1.6;
+      margin-bottom: 10px;
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 22px;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 50px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #fff;
+      backdrop-filter: blur(8px);
+    }
+
+    .status-badge .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #ffd700;
+      box-shadow: 0 0 10px #ffd700;
+      animation: pulse-dot 1.2s infinite;
+    }
+    
+    .status-badge.connected .dot {
+      background: #2cb67d;
+      box-shadow: 0 0 12px #2cb67d;
+      animation: none;
+    }
+
+    #start-btn {
+      padding: 16px 44px;
+      border: none;
+      outline: none;
+      cursor: pointer;
+      border-radius: 50px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: rgba(255, 255, 255, 0.4);
+      font-family: 'Outfit', sans-serif;
+      font-size: 16px;
+      font-weight: 800;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      pointer-events: none;
+      transform: scale(0.95);
+    }
+
+    #start-btn.ready {
+      opacity: 1;
+      pointer-events: auto;
+      transform: scale(1);
+      background: linear-gradient(135deg, #7f5af0 0%, #2cb67d 100%);
+      border: none;
+      color: #fff;
+      box-shadow: 0 10px 30px rgba(127,90,240,0.3);
+    }
+
+    #start-btn.ready:hover {
+      transform: translateY(-2px) scale(1.02);
+      box-shadow: 0 15px 40px rgba(44,182,125,0.45);
+    }
+
+    #start-btn.ready:active {
+      transform: translateY(0px) scale(1);
     }
 
     /* HUD overlay */
@@ -373,9 +486,19 @@
 
 <div id="app">
 
-  <!-- ── Game Canvas ──────────────────────────── -->
   <div id="game-wrap">
     <canvas id="gameCanvas"></canvas>
+
+    <!-- Start Screen Overlay -->
+    <div id="start-screen">
+      <div class="status-badge">
+        <div class="dot"></div>
+        <span>Waiting for phone connection…</span>
+      </div>
+      <h1>Motion Fruit Ninja</h1>
+      <p>Scan the QR code on the right with your phone to connect your motion sword controller, then click start.</p>
+      <button id="start-btn" onclick="startGame()">Connect Phone First</button>
+    </div>
 
     <div id="hud">
       <div id="score-label">SCORE</div>
@@ -579,6 +702,7 @@ let gameState = {
   missed: 0,
   bombsHit: 0,
   running: true,
+  started: false, // Added to prevent spawning before phone connects & start button is clicked
   lastTime: 0,
   spawnTimer: 0,
   spawnInterval: 1800, // ms
@@ -964,28 +1088,30 @@ initBgStars();
 
 function drawBackground(t) {
   // Deep space gradient
+  // Deep premium black space aesthetic
   const bg = ctx.createLinearGradient(0, 0, 0, canvas.height);
-  bg.addColorStop(0, '#07071a');
-  bg.addColorStop(1, '#0d0520');
+  bg.addColorStop(0, '#020204');
+  bg.addColorStop(0.5, '#050508');
+  bg.addColorStop(1, '#09090e');
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   // Stars
   bgStars.forEach(s => {
     s.twinkle += 0.02;
-    const a = s.alpha * (0.7 + 0.3 * Math.sin(s.twinkle));
+    const a = s.alpha * (0.6 + 0.4 * Math.sin(s.twinkle));
     ctx.beginPath();
     ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
     ctx.fillStyle = `rgba(255,255,255,${a})`;
     ctx.fill();
   });
 
-  // Subtle bottom glow (floor)
-  const floor = ctx.createLinearGradient(0, canvas.height - 80, 0, canvas.height);
+  // Subtle bottom glow (aesthetic neon floor)
+  const floor = ctx.createLinearGradient(0, canvas.height - 120, 0, canvas.height);
   floor.addColorStop(0, 'rgba(127,90,240,0)');
-  floor.addColorStop(1, 'rgba(127,90,240,0.08)');
+  floor.addColorStop(1, 'rgba(127,90,240,0.04)');
   ctx.fillStyle = floor;
-  ctx.fillRect(0, canvas.height - 80, canvas.width, 80);
+  ctx.fillRect(0, canvas.height - 120, canvas.width, 120);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1014,14 +1140,16 @@ function gameLoop(timestamp) {
   ctx.clearRect(-10, -10, canvas.width + 20, canvas.height + 20);
   drawBackground(timestamp);
 
-  // Spawn timer
-  gameState.spawnTimer += dt;
-  if (gameState.spawnTimer >= gameState.spawnInterval) {
-    gameState.spawnTimer = 0;
-    const count = Math.random() < 0.25 ? 2 : 1;
-    for (let i = 0; i < count; i++) spawnFruit();
-    // Gradually increase difficulty
-    gameState.spawnInterval = Math.max(700, gameState.spawnInterval - 2);
+  // Spawn timer (only active if game is started)
+  if (gameState.started) {
+    gameState.spawnTimer += dt;
+    if (gameState.spawnTimer >= gameState.spawnInterval) {
+      gameState.spawnTimer = 0;
+      const count = Math.random() < 0.25 ? 2 : 1;
+      for (let i = 0; i < count; i++) spawnFruit();
+      // Gradually increase difficulty
+      gameState.spawnInterval = Math.max(700, gameState.spawnInterval - 2);
+    }
   }
 
   // Update & draw fruits
@@ -1111,7 +1239,7 @@ function triggerGameOver() {
 function restartGame() {
   gameState = {
     score: 0, lives: 3, combo: 0, bestCombo: gameState.bestCombo,
-    sliced: 0, missed: 0, bombsHit: 0, running: true,
+    sliced: 0, missed: 0, bombsHit: 0, running: true, started: true, // Remains started
     lastTime: performance.now(), spawnTimer: 0,
     spawnInterval: 1800, level: 1,
   };
@@ -1196,6 +1324,20 @@ function initPeer() {
 
     conn.on('open', () => {
       setStatus('connected', 'Phone connected ✓');
+      
+      // Update Start Screen UI to show ready status
+      const badge = document.querySelector('.status-badge');
+      if (badge) {
+        badge.classList.add('connected');
+        const badgeText = badge.querySelector('span');
+        if (badgeText) badgeText.textContent = 'Phone Connected ✓';
+      }
+      const startBtn = document.getElementById('start-btn');
+      if (startBtn) {
+        startBtn.classList.add('ready');
+        startBtn.textContent = 'Start Game';
+      }
+      
       // Send cal_ack to confirm open
       try { conn.send({ type: 'cal_ack' }); } catch(e) {}
     });
@@ -1204,6 +1346,19 @@ function initPeer() {
     conn.on('close', () => {
       conn = null;
       setStatus('waiting', 'Phone disconnected…');
+      
+      // Reset Start Screen UI on disconnect
+      const badge = document.querySelector('.status-badge');
+      if (badge) {
+        badge.classList.remove('connected');
+        const badgeText = badge.querySelector('span');
+        if (badgeText) badgeText.textContent = 'Waiting for phone connection…';
+      }
+      const startBtn = document.getElementById('start-btn');
+      if (startBtn) {
+        startBtn.classList.remove('ready');
+        startBtn.textContent = 'Connect Phone First';
+      }
     });
     conn.on('error', (e) => {
       console.error('conn error', e);
@@ -1310,6 +1465,40 @@ function updateSensorBar(key, val, min, max) {
   const txt = document.getElementById(`val-${key}`);
   if (bar) bar.style.width = pct + '%';
   if (txt) txt.textContent = typeof val === 'number' ? val.toFixed(1) : '–';
+}
+
+// ═══════════════════════════════════════════════════════════
+// GAME PLAY STATE MANAGEMENT
+// ═══════════════════════════════════════════════════════════
+function enterFullscreen() {
+  const wrap = document.getElementById('game-wrap');
+  if (wrap.requestFullscreen) {
+    wrap.requestFullscreen();
+  } else if (wrap.webkitRequestFullscreen) { /* Safari */
+    wrap.webkitRequestFullscreen();
+  } else if (wrap.msRequestFullscreen) { /* IE11 */
+    wrap.msRequestFullscreen();
+  }
+}
+
+document.addEventListener('fullscreenchange', () => {
+  // Ensure canvas resizes perfectly when going fullscreen
+  setTimeout(resizeCanvas, 100);
+});
+
+function startGame() {
+  ensureAudio(); // Audio context needs gesture
+  enterFullscreen();
+  
+  // Hide start overlay screen
+  const startScreen = document.getElementById('start-screen');
+  if (startScreen) {
+    startScreen.classList.add('hidden');
+  }
+  
+  // Activate game spawning & loop physics
+  gameState.started = true;
+  gameState.lastTime = performance.now();
 }
 
 // ═══════════════════════════════════════════════════════════
